@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 2333
+      LAVALINK_SERVER_PASSWORD: youshallnotpass
+    ports:
+      - "2333:2333"
+
+  bot:
+    image: node:24
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      - lavalink
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: sh -lc "npm install && npm run build && npm start"
