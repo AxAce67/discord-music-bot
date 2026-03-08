@@ -57,6 +57,8 @@ Resolver を使う場合は以下も設定します。
 - `RESOLVER_TIMEOUT_MS=8000`
 
 Resolver 側の設定は `resolver-service/.env.example` を参照してください。
+YouTube 制限が強い環境では、resolver 側に `YTDLP_COOKIES_FILE=/opt/music-bot/resolver-service/cookies.txt`
+を追加して cookies.txt を使う構成にもできます。
 
 ## VPS Operation
 
@@ -106,6 +108,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/music-bot/resolver-service
+EnvironmentFile=-/opt/music-bot/resolver-service/.env
 ExecStart=/usr/bin/python3 -m uvicorn app:app --host 127.0.0.1 --port 8080
 Restart=always
 User=musicbot

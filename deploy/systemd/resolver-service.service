@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/music-bot/resolver-service
+EnvironmentFile=-/opt/music-bot/resolver-service/.env
 ExecStart=/opt/music-bot/resolver-service/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5

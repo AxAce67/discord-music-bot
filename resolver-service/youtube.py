@@ -56,8 +56,13 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
         "bestaudio/best",
         "--no-warnings",
         "--no-call-home",
-        identifier,
     ]
+
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        command.extend(["--cookies", cookies_file])
+
+    command.append(identifier)
 
     try:
         completed = subprocess.run(
