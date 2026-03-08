@@ -72,6 +72,14 @@ export class LavalinkAudioBackend extends AudioBackend {
       this.attachPlayerListeners(player);
       await this.ensureServerDeaf(request.guildId);
     } catch (error) {
+      if (isLavalinkConnectionError(error)) {
+        throw new MusicBotError(
+          "LAVALINK_UNAVAILABLE",
+          "音声サーバーにまだ接続できていません。",
+          String(error)
+        );
+      }
+
       throw new MusicBotError("VOICE_CONNECT_FAILED", "VCへの接続に失敗しました。", String(error));
     }
   }
@@ -266,4 +274,16 @@ function normalizePlaybackUrl(value: string): string {
   }
 
   return value;
+}
+
+function isLavalinkConnectionError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+
+  return (
+    message.includes("Can't find any nodes to connect on") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("Websocket closed before a connection was established") ||
+    message.includes("socket hang up")
+  );
 }
