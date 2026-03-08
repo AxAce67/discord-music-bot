@@ -82,6 +82,7 @@ describe("ResolverBackedAudioBackend", () => {
           trackId: "youtube:abc",
           title: "Track ABC",
           url: "https://www.youtube.com/watch?v=abc",
+          playbackUrl: "https://rr.example.com/audio-abc",
           durationMs: 120000,
           artworkUrl: "https://i.ytimg.com/vi/abc/hqdefault.jpg",
           source: "youtube"
@@ -95,8 +96,8 @@ describe("ResolverBackedAudioBackend", () => {
     const results = await backend.resolve("hello");
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.encodedTrack).toBe("encoded:https://www.youtube.com/watch?v=abc");
-    expect(playback.resolveCalls).toEqual(["https://www.youtube.com/watch?v=abc"]);
+    expect(results[0]?.encodedTrack).toBe("encoded:https://rr.example.com/audio-abc");
+    expect(playback.resolveCalls).toEqual(["https://rr.example.com/audio-abc"]);
   });
 
   it("hydrates playlist results and keeps successful entries", async () => {

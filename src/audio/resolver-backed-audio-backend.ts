@@ -83,7 +83,7 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
 
     for (const track of tracks) {
       try {
-        const resolved = await this.playbackBackend.resolve(track.url);
+        const resolved = await this.playbackBackend.resolve(track.playbackUrl ?? track.url);
         const playableTrack = resolved[0];
         if (!playableTrack) {
           throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました");
@@ -99,7 +99,10 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
           source: "youtube"
         });
       } catch (error) {
-        this.logger.warn({ err: error, trackUrl: track.url }, "Failed to hydrate resolver track with Lavalink");
+        this.logger.warn(
+          { err: error, trackUrl: track.url, playbackUrl: track.playbackUrl },
+          "Failed to hydrate resolver track with Lavalink"
+        );
         if (!allowPartial) {
           throw error instanceof MusicBotError
             ? error

@@ -96,6 +96,7 @@ function validateTracksPayload(payload: ResolverTracksPayload): ResolverSearchRe
     trackId: String(track.trackId),
     title: String(track.title),
     url: String(track.url),
+    playbackUrl: track.playbackUrl ? String(track.playbackUrl) : undefined,
     durationMs: Number(track.durationMs),
     artworkUrl: track.artworkUrl ? String(track.artworkUrl) : undefined,
     source: "youtube"

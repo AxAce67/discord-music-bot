@@ -24,6 +24,7 @@ class TrackPayload(BaseModel):
     trackId: str
     title: str
     url: str
+    playbackUrl: str | None = None
     durationMs: int
     artworkUrl: str | None = None
     source: str = "youtube"

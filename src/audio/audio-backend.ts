@@ -15,6 +15,7 @@ export interface ResolverSearchResult {
   trackId: string;
   title: string;
   url: string;
+  playbackUrl?: string;
   durationMs: number;
   artworkUrl?: string;
   source: "youtube";

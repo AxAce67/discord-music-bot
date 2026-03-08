@@ -52,6 +52,8 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
         os.getenv("YTDLP_BINARY", "yt-dlp"),
         "--dump-single-json",
         "--skip-download",
+        "--format",
+        "bestaudio/best",
         "--no-warnings",
         "--no-call-home",
         identifier,
@@ -107,6 +109,7 @@ def map_track(payload: dict[str, Any]) -> TrackPayload | None:
         trackId=f"youtube:{video_id}",
         title=str(title),
         url=normalize_track_url(str(webpage_url)),
+        playbackUrl=extract_playback_url(payload),
         durationMs=max(0, duration) * 1000,
         artworkUrl=str(payload.get("thumbnail")) if payload.get("thumbnail") else None,
     )
@@ -184,3 +187,20 @@ def normalize_playlist_url(url: str) -> str:
             return f"https://www.youtube.com/playlist?list={playlist_id}"
 
     return normalize_track_url(url)
+
+
+def extract_playback_url(payload: dict[str, Any]) -> str | None:
+    requested_downloads = payload.get("requested_downloads")
+    if isinstance(requested_downloads, list):
+        for entry in requested_downloads:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                return url
+
+    direct_url = payload.get("url")
+    if isinstance(direct_url, str) and direct_url.startswith(("http://", "https://")):
+        return direct_url
+
+    return None
