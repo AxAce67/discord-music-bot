@@ -36,7 +36,7 @@ Copy `.env.example` and set:
 - `RESOLVER_LOG_LEVEL`
 - `YTDLP_BINARY`
 - `YTDLP_COOKIES_FILE` (optional)
-- `YTDLP_EXTRACTOR_ARGS` (optional)
+- `YTDLP_EXTRACTOR_ARGS` (optional, one extractor-arg entry per line)
 - `YTDLP_SLEEP_INTERVAL_SECONDS` (optional)
 
 `yt-dlp` must be available on PATH or explicitly configured with `YTDLP_BINARY`.
@@ -64,7 +64,8 @@ Example `.env`:
 
 ```env
 YTDLP_COOKIES_FILE=/opt/music-bot/resolver-service/cookies.txt
-YTDLP_EXTRACTOR_ARGS=youtube:player_client=mweb;po_token=mweb.gvs+PO_TOKEN_HERE
+YTDLP_EXTRACTOR_ARGS=youtube:player_client=mweb;formats=missing_pot
+youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416
 YTDLP_SLEEP_INTERVAL_SECONDS=1
 ```
 

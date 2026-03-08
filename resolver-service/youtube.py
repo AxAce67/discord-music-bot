@@ -63,7 +63,8 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
 
     extractor_args = os.getenv("YTDLP_EXTRACTOR_ARGS")
     if extractor_args:
-        command.extend(["--extractor-args", extractor_args])
+        for extractor_arg in split_env_list(extractor_args):
+            command.extend(["--extractor-args", extractor_arg])
 
     sleep_interval = os.getenv("YTDLP_SLEEP_INTERVAL_SECONDS")
     if sleep_interval:
@@ -216,3 +217,7 @@ def extract_playback_url(payload: dict[str, Any]) -> str | None:
         return direct_url
 
     return None
+
+
+def split_env_list(value: str) -> list[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
