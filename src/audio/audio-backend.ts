@@ -8,7 +8,8 @@ export interface ResolvedTrack {
   durationMs: number;
   artworkUrl?: string;
   source: "youtube";
-  encodedTrack: string;
+  encodedTrack?: string;
+  playbackIdentifier?: string;
 }
 
 export interface ResolverSearchResult {
@@ -35,7 +36,13 @@ export abstract class AudioBackend extends EventEmitter {
   abstract leave(guildId: GuildId): Promise<void>;
   abstract resolve(query: string): Promise<ResolvedTrack[]>;
   abstract resolvePlaylist(query: string): Promise<ResolvedTrack[]>;
-  abstract play(guildId: GuildId, encodedTrack: string): Promise<void>;
+  abstract play(
+    guildId: GuildId,
+    track: {
+      encodedTrack?: string;
+      playbackIdentifier?: string;
+    }
+  ): Promise<void>;
   abstract getPlaybackPosition(guildId: GuildId): number;
   abstract pause(guildId: GuildId): Promise<void>;
   abstract resume(guildId: GuildId): Promise<void>;

@@ -47,8 +47,14 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
     return this.hydrateTracks(tracks, "PLAYLIST_NOT_FOUND", true);
   }
 
-  async play(guildId: string, encodedTrack: string): Promise<void> {
-    await this.playbackBackend.play(guildId, encodedTrack);
+  async play(
+    guildId: string,
+    track: {
+      encodedTrack?: string;
+      playbackIdentifier?: string;
+    }
+  ): Promise<void> {
+    await this.playbackBackend.play(guildId, track);
   }
 
   getPlaybackPosition(guildId: string): number {
@@ -82,6 +88,19 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
     const hydrated: ResolvedTrack[] = [];
 
     for (const track of tracks) {
+      if (track.playbackUrl) {
+        hydrated.push({
+          trackId: track.trackId,
+          title: track.title,
+          url: track.url,
+          durationMs: track.durationMs,
+          artworkUrl: track.artworkUrl,
+          playbackIdentifier: track.playbackUrl,
+          source: "youtube"
+        });
+        continue;
+      }
+
       try {
         const resolved = await this.playbackBackend.resolve(track.playbackUrl ?? track.url);
         const playableTrack = resolved[0];
@@ -96,6 +115,7 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
           durationMs: track.durationMs,
           artworkUrl: track.artworkUrl,
           encodedTrack: playableTrack.encodedTrack,
+          playbackIdentifier: playableTrack.playbackIdentifier,
           source: "youtube"
         });
       } catch (error) {

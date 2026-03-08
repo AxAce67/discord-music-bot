@@ -220,4 +220,5 @@ def extract_playback_url(payload: dict[str, Any]) -> str | None:
 
 
 def split_env_list(value: str) -> list[str]:
-    return [line.strip() for line in value.splitlines() if line.strip()]
+    normalized = value.replace("||", "\n")
+    return [line.strip() for line in normalized.splitlines() if line.strip()]

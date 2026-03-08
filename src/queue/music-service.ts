@@ -277,7 +277,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       });
     }
 
-    await this.audioBackend.play(context.guildId, nextTrack.encodedTrack);
+      await this.audioBackend.play(context.guildId, getPlaybackTarget(nextTrack));
     await this.botStatsService.recordTrackPlay(nextTrack.trackId);
     await this.queueRepository.saveQueue(state);
     return state;
@@ -332,7 +332,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     });
 
     if (state.currentTrack) {
-      await this.audioBackend.play(guildId, state.currentTrack.encodedTrack);
+      await this.audioBackend.play(guildId, getPlaybackTarget(state.currentTrack));
       state.isPlaying = true;
       state.isPaused = false;
       state.isStopped = false;
@@ -446,7 +446,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       state.isPaused = false;
       state.isStopped = false;
       state.updatedAt = Date.now();
-      await this.audioBackend.play(guildId, state.currentTrack.encodedTrack);
+      await this.audioBackend.play(guildId, getPlaybackTarget(state.currentTrack));
       await this.botStatsService.recordTrackPlay(state.currentTrack.trackId);
       await this.queueRepository.saveQueue(state);
       return;
@@ -461,7 +461,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
     if (nextTrack) {
       this.logger.info({ guildId, trackTitle: nextTrack.title }, "Advancing to next track");
-      await this.audioBackend.play(guildId, nextTrack.encodedTrack);
+      await this.audioBackend.play(guildId, getPlaybackTarget(nextTrack));
       await this.botStatsService.recordTrackPlay(nextTrack.trackId);
     }
 
@@ -554,7 +554,8 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       artworkUrl: selectedTrack.artworkUrl,
       requestedBy,
       source: "youtube",
-      encodedTrack: selectedTrack.encodedTrack
+      encodedTrack: selectedTrack.encodedTrack,
+      playbackIdentifier: selectedTrack.playbackIdentifier
     };
 
     if (!state.currentTrack) {
@@ -563,7 +564,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       state.isPaused = false;
       state.isStopped = false;
       this.logger.info({ guildId: context.guildId, trackTitle: queueTrack.title }, "Playing track immediately");
-      await this.audioBackend.play(context.guildId, queueTrack.encodedTrack);
+      await this.audioBackend.play(context.guildId, getPlaybackTarget(queueTrack));
       await this.botStatsService.recordTrackPlay(queueTrack.trackId);
     } else {
       this.logger.info({ guildId: context.guildId, trackTitle: queueTrack.title }, "Appending track to queue");
@@ -584,4 +585,11 @@ function shuffle<T>(items: T[]): T[] {
   }
 
   return shuffled;
+}
+
+function getPlaybackTarget(track: QueueTrack): { encodedTrack?: string; playbackIdentifier?: string } {
+  return {
+    encodedTrack: track.encodedTrack,
+    playbackIdentifier: track.playbackIdentifier
+  };
 }

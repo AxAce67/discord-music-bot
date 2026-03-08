@@ -6,7 +6,7 @@ import type { ResolverClient } from "../src/resolver/resolver-client.js";
 
 class FakePlaybackBackend extends AudioBackend {
   public readonly resolveCalls: string[] = [];
-  public readonly playCalls: string[] = [];
+  public readonly playCalls: Array<{ encodedTrack?: string; playbackIdentifier?: string }> = [];
 
   hasConnection(): boolean {
     return true;
@@ -38,8 +38,11 @@ class FakePlaybackBackend extends AudioBackend {
     return [];
   }
 
-  async play(_guildId: string, encodedTrack: string): Promise<void> {
-    this.playCalls.push(encodedTrack);
+  async play(
+    _guildId: string,
+    track: { encodedTrack?: string; playbackIdentifier?: string }
+  ): Promise<void> {
+    this.playCalls.push(track);
   }
 
   getPlaybackPosition(): number {
@@ -96,8 +99,9 @@ describe("ResolverBackedAudioBackend", () => {
     const results = await backend.resolve("hello");
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.encodedTrack).toBe("encoded:https://rr.example.com/audio-abc");
-    expect(playback.resolveCalls).toEqual(["https://rr.example.com/audio-abc"]);
+    expect(results[0]?.playbackIdentifier).toBe("https://rr.example.com/audio-abc");
+    expect(results[0]?.encodedTrack).toBeUndefined();
+    expect(playback.resolveCalls).toEqual([]);
   });
 
   it("hydrates playlist results and keeps successful entries", async () => {
@@ -138,8 +142,8 @@ describe("ResolverBackedAudioBackend", () => {
     const resolver = new FakeResolverClient([], [], []);
     const backend = new ResolverBackedAudioBackend(resolver, playback, pino({ enabled: false }));
 
-    await backend.play("guild-1", "encoded-track");
+    await backend.play("guild-1", { encodedTrack: "encoded-track" });
 
-    expect(playback.playCalls).toEqual(["encoded-track"]);
+    expect(playback.playCalls).toEqual([{ encodedTrack: "encoded-track" }]);
   });
 });

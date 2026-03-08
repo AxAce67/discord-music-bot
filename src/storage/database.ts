@@ -66,6 +66,7 @@ export async function createDatabase(databaseUrl: string): Promise<SqliteDatabas
   await ensureColumn(db, "guild_queue_state", "repeat_mode", "TEXT NOT NULL DEFAULT 'off'");
   await ensureColumn(db, "guild_settings", "language", "TEXT NOT NULL DEFAULT 'ja'");
   await ensureColumn(db, "guild_queue_tracks", "artwork_url", "TEXT");
+  await ensureColumn(db, "guild_queue_tracks", "playback_identifier", "TEXT");
   await db.run(`INSERT OR IGNORE INTO bot_stats (id, total_play_count) VALUES (1, 0)`);
 
   return db;

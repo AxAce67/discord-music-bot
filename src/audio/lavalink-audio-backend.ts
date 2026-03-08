@@ -136,10 +136,26 @@ export class LavalinkAudioBackend extends AudioBackend {
     }));
   }
 
-  async play(guildId: string, encodedTrack: string): Promise<void> {
+  async play(
+    guildId: string,
+    track: {
+      encodedTrack?: string;
+      playbackIdentifier?: string;
+    }
+  ): Promise<void> {
     const player = this.getPlayer(guildId);
     this.logger.info({ guildId }, "Starting track playback");
-    await player.playTrack({ track: { encoded: encodedTrack } });
+    if (track.encodedTrack) {
+      await player.playTrack({ track: { encoded: track.encodedTrack } });
+      return;
+    }
+
+    if (track.playbackIdentifier) {
+      await player.playTrack({ track: { identifier: track.playbackIdentifier } });
+      return;
+    }
+
+    throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
   }
 
   getPlaybackPosition(guildId: string): number {

@@ -20,7 +20,8 @@ export interface QueueTrack {
   artworkUrl?: string;
   requestedBy: UserId;
   source: "youtube";
-  encodedTrack: string;
+  encodedTrack?: string;
+  playbackIdentifier?: string;
 }
 
 export interface GuildQueueState {

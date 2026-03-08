@@ -25,6 +25,15 @@ export interface StatsRepository {
 }
 
 function mapTrack(row: Record<string, unknown>): QueueTrack {
+  const encodedTrack =
+    typeof row.encoded_track === "string" && row.encoded_track.length > 0
+      ? row.encoded_track
+      : undefined;
+  const playbackIdentifier =
+    typeof row.playback_identifier === "string" && row.playback_identifier.length > 0
+      ? row.playback_identifier
+      : undefined;
+
   return {
     trackId: String(row.track_id),
     title: String(row.title),
@@ -33,7 +42,8 @@ function mapTrack(row: Record<string, unknown>): QueueTrack {
     artworkUrl: row.artwork_url ? String(row.artwork_url) : undefined,
     requestedBy: String(row.requested_by),
     source: "youtube",
-    encodedTrack: String(row.encoded_track)
+    encodedTrack,
+    playbackIdentifier
   };
 }
 
@@ -156,8 +166,8 @@ export class SqliteQueueRepository implements QueueRepository {
   ): Promise<void> {
     await this.db.run(
       `INSERT INTO guild_queue_tracks (
-        guild_id, position, is_current, track_id, title, url, duration_ms, artwork_url, requested_by, source, encoded_track
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        guild_id, position, is_current, track_id, title, url, duration_ms, artwork_url, requested_by, source, encoded_track, playback_identifier
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       guildId,
       position,
       isCurrent ? 1 : 0,
@@ -168,7 +178,8 @@ export class SqliteQueueRepository implements QueueRepository {
       track.artworkUrl ?? null,
       track.requestedBy,
       track.source,
-      track.encodedTrack
+      track.encodedTrack ?? "",
+      track.playbackIdentifier ?? null
     );
   }
 }

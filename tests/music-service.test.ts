@@ -7,7 +7,7 @@ import pino from "pino";
 import { BotStatsService } from "../src/stats/bot-stats-service.js";
 
 class FakeAudioBackend extends AudioBackend {
-  public readonly plays: string[] = [];
+  public readonly plays: Array<{ encodedTrack?: string; playbackIdentifier?: string }> = [];
   public readonly joins: JoinVoiceRequest[] = [];
   public connected = false;
   public playbackPosition = 0;
@@ -67,8 +67,11 @@ class FakeAudioBackend extends AudioBackend {
     return this.resolve(query);
   }
 
-  async play(_guildId: string, encodedTrack: string): Promise<void> {
-    this.plays.push(encodedTrack);
+  async play(
+    _guildId: string,
+    track: { encodedTrack?: string; playbackIdentifier?: string }
+  ): Promise<void> {
+    this.plays.push(track);
   }
 
   getPlaybackPosition(): number {
