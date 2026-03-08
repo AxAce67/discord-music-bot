@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from errors import ResolverError
 from models import TrackPayload
+from streams import register_playback_source
 
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
@@ -118,11 +119,14 @@ def map_track(payload: dict[str, Any]) -> TrackPayload | None:
     webpage_url = payload.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
     duration = int(payload.get("duration") or 0)
 
+    playback_url, playback_headers = extract_playback_source(payload)
+    proxied_playback_url = register_playback_source(playback_url, playback_headers) if playback_url else None
+
     return TrackPayload(
         trackId=f"youtube:{video_id}",
         title=str(title),
         url=normalize_track_url(str(webpage_url)),
-        playbackUrl=extract_playback_url(payload),
+        playbackUrl=proxied_playback_url,
         durationMs=max(0, duration) * 1000,
         artworkUrl=str(payload.get("thumbnail")) if payload.get("thumbnail") else None,
     )
@@ -202,7 +206,7 @@ def normalize_playlist_url(url: str) -> str:
     return normalize_track_url(url)
 
 
-def extract_playback_url(payload: dict[str, Any]) -> str | None:
+def extract_playback_source(payload: dict[str, Any]) -> tuple[str | None, dict[str, str]]:
     requested_downloads = payload.get("requested_downloads")
     if isinstance(requested_downloads, list):
         for entry in requested_downloads:
@@ -210,15 +214,28 @@ def extract_playback_url(payload: dict[str, Any]) -> str | None:
                 continue
             url = entry.get("url")
             if isinstance(url, str) and url.startswith(("http://", "https://")):
-                return url
+                return url, normalize_headers(entry.get("http_headers"))
 
     direct_url = payload.get("url")
     if isinstance(direct_url, str) and direct_url.startswith(("http://", "https://")):
-        return direct_url
+        return direct_url, normalize_headers(payload.get("http_headers"))
 
-    return None
+    return None, {}
 
 
 def split_env_list(value: str) -> list[str]:
     normalized = value.replace("||", "\n")
     return [line.strip() for line in normalized.splitlines() if line.strip()]
+
+
+def normalize_headers(raw_headers: Any) -> dict[str, str]:
+    if not isinstance(raw_headers, dict):
+        return {}
+
+    normalized: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        normalized[key] = value
+
+    return normalized

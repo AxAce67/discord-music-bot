@@ -36,8 +36,10 @@ Copy `.env.example` and set:
 - `RESOLVER_LOG_LEVEL`
 - `YTDLP_BINARY`
 - `YTDLP_COOKIES_FILE` (optional)
-- `YTDLP_EXTRACTOR_ARGS` (optional, one extractor-arg entry per line)
+- `YTDLP_EXTRACTOR_ARGS` (optional, use `||` to separate multiple entries)
 - `YTDLP_SLEEP_INTERVAL_SECONDS` (optional)
+- `RESOLVER_PUBLIC_BASE_URL` (optional, defaults to `http://127.0.0.1:8080`)
+- `RESOLVER_STREAM_TTL_SECONDS` (optional)
 
 `yt-dlp` must be available on PATH or explicitly configured with `YTDLP_BINARY`.
 
@@ -51,6 +53,7 @@ YTDLP_COOKIES_FILE=/opt/music-bot/resolver-service/cookies.txt
 ```
 
 File permissions should be restricted because the cookies file is effectively a login session.
+The resolver also proxies playback URLs through `/v1/stream/{token}` so Lavalink can fetch them from localhost instead of talking to `googlevideo` directly.
 
 ## VPS hardening
 
@@ -64,8 +67,7 @@ Example `.env`:
 
 ```env
 YTDLP_COOKIES_FILE=/opt/music-bot/resolver-service/cookies.txt
-YTDLP_EXTRACTOR_ARGS=youtube:player_client=mweb;formats=missing_pot
-youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416
+YTDLP_EXTRACTOR_ARGS=youtube:player_client=mweb;formats=missing_pot||youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416
 YTDLP_SLEEP_INTERVAL_SECONDS=1
 ```
 
