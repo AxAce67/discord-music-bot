@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from typing import Any
@@ -9,6 +10,8 @@ from urllib.parse import parse_qs, urlparse
 from errors import ResolverError
 from models import TrackPayload
 from streams import register_playback_source
+
+logger = logging.getLogger("resolver.youtube")
 
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
@@ -73,6 +76,12 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
 
     if completed.returncode != 0:
         stderr = completed.stderr.lower()
+        logger.warning(
+            "yt-dlp failed for %s with exit code %s: %s",
+            identifier,
+            completed.returncode,
+            completed.stderr.strip(),
+        )
         if "private video" in stderr or "members-only" in stderr or "sign in" in stderr:
             raise ResolverError("TRACK_NOT_FOUND", "No playable track found", 404)
         raise ResolverError("UPSTREAM_FAILED", "yt-dlp failed to resolve the request", 502)
