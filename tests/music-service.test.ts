@@ -204,6 +204,25 @@ describe("DefaultMusicService", () => {
     expect(audio.connected).toBe(false);
   });
 
+  it("ignores manual voice disconnect normalization while leaving", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio);
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+
+    const leavePromise = service.leave("guild-1");
+    audio.emit("voiceDisconnected", "guild-1");
+    await leavePromise;
+
+    const queue = await service.getQueue("guild-1");
+    expect(queue.currentTrack).toBeNull();
+    expect(queue.upcomingTracks).toHaveLength(0);
+    expect(queue.voiceChannelId).toBeNull();
+  });
+
   it("toggles pause state", async () => {
     const service = createService(new FakeAudioBackend());
 

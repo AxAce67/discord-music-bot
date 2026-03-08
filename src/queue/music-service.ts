@@ -49,6 +49,7 @@ export interface MusicService {
 
 export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly suppressedTrackEndGuilds = new Set<string>();
+  private readonly suppressedVoiceDisconnectGuilds = new Set<string>();
   private readonly trackFailureRecoveryTimers = new Map<string, NodeJS.Timeout>();
   private readonly trackEndHandler = async (guildId: string) => {
     this.clearTrackFailureRecovery(guildId);
@@ -81,6 +82,10 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     });
     this.audioBackend.on("voiceDisconnected", async (guildId: string) => {
       try {
+        if (this.suppressedVoiceDisconnectGuilds.delete(guildId)) {
+          this.logger.info({ guildId }, "Ignoring voice disconnect triggered by manual leave");
+          return;
+        }
         await this.handleVoiceDisconnected(guildId);
       } catch (error) {
         this.logger.error({ err: error, guildId }, "Failed to normalize queue after voice disconnect");
@@ -299,6 +304,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   async leave(guildId: string): Promise<void> {
     this.logger.info({ guildId }, "Leaving voice channel and clearing queue");
     this.clearTrackFailureRecovery(guildId);
+    this.suppressedVoiceDisconnectGuilds.add(guildId);
     await this.audioBackend.leave(guildId);
     await this.queueRepository.deleteQueue(guildId);
   }
@@ -306,6 +312,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   async disconnectKeepingQueue(guildId: string): Promise<GuildQueueState> {
     this.logger.info({ guildId }, "Leaving voice channel and keeping queue");
     this.clearTrackFailureRecovery(guildId);
+    this.suppressedVoiceDisconnectGuilds.add(guildId);
     await this.audioBackend.leave(guildId);
     const state = await this.getQueue(guildId);
     return this.normalizeDisconnectedState(state);
@@ -404,6 +411,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     await Promise.all(
       guildIds.map(async (guildId) => {
         try {
+          this.suppressedVoiceDisconnectGuilds.add(guildId);
           await this.audioBackend.leave(guildId);
         } catch (error) {
           this.logger.warn({ err: error, guildId }, "Failed to leave voice channel during shutdown");

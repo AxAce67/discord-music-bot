@@ -3,10 +3,18 @@ import { z } from "zod";
 
 loadDotEnv();
 
+const optionalString = z.preprocess((value) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+
+  return value;
+}, z.string().min(1).optional());
+
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_CLIENT_ID: z.string().min(1),
-  DISCORD_GUILD_ID: z.string().min(1).optional(),
+  DISCORD_GUILD_ID: optionalString,
   BOT_PREFIX: z.string().min(1).default("!"),
   LAVALINK_HOST: z.string().min(1),
   LAVALINK_PORT: z.coerce.number().int().positive(),
