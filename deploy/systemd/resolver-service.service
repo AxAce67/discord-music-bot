@@ -1,0 +1,15 @@
+[Unit]
+Description=Kanade Resolver Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/music-bot/resolver-service
+ExecStart=/opt/music-bot/resolver-service/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+User=ubuntu
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
