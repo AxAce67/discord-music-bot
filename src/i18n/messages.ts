@@ -223,9 +223,29 @@ export function translateErrorCode(language: LanguageCode, code: string, fallbac
       ja: "URLから曲情報を取得できませんでした\n有効なYouTube URLだとそのまま再生できます",
       en: "Failed to resolve track information\nEnter a valid YouTube URL"
     },
+    PLAYLIST_NOT_FOUND: {
+      ja: "プレイリストを取得できませんでした\n公開されたYouTubeプレイリストURLで試すと解決する場合があります",
+      en: "Could not load the playlist\nTry a public YouTube playlist URL"
+    },
     LAVALINK_UNAVAILABLE: {
       ja: "音声サーバーにまだ接続できていません\n少し待つと使えるようになる場合があります",
       en: "The audio server is unavailable\nPlease try again in a moment"
+    },
+    RESOLVER_UNAVAILABLE: {
+      ja: "曲情報の取得サービスに接続できませんでした\n少し待ってからもう一度試すと解決する場合があります",
+      en: "The resolver service is unavailable\nPlease try again in a moment"
+    },
+    RESOLVER_BAD_RESPONSE: {
+      ja: "曲情報の取得サービスから正しい応答を受け取れませんでした\n少し待ってからもう一度試すと解決する場合があります",
+      en: "The resolver service returned an invalid response\nPlease try again in a moment"
+    },
+    RESOLVER_UPSTREAM_FAILED: {
+      ja: "この動画は取得できませんでした\n別のURLか曲名検索で試すと再生できる場合があります",
+      en: "This video could not be resolved\nTry a different URL or search by title"
+    },
+    BAD_REQUEST: {
+      ja: "曲情報の取得に失敗しました\n入力した内容を見直すと解決する場合があります",
+      en: "The request could not be resolved\nCheck the query or URL and try again"
     },
     VOICE_CONNECT_FAILED: {
       ja: "VCへの接続に失敗しました\n権限や接続先チャンネルを見直すと解決する場合があります",

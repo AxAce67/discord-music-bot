@@ -7,7 +7,16 @@ export interface ResolvedTrack {
   url: string;
   durationMs: number;
   artworkUrl?: string;
+  source: "youtube";
   encodedTrack: string;
+}
+
+export interface ResolverSearchResult {
+  trackId: string;
+  title: string;
+  url: string;
+  durationMs: number;
+  artworkUrl?: string;
   source: "youtube";
 }
 

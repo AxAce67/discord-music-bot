@@ -20,6 +20,17 @@ const envSchema = z.object({
   LAVALINK_PORT: z.coerce.number().int().positive(),
   LAVALINK_PASSWORD: z.string().min(1),
   DATABASE_URL: z.string().min(1),
+  RESOLVER_ENABLED: z
+    .preprocess((value) => {
+      if (typeof value === "string") {
+        return value.toLowerCase() === "true";
+      }
+
+      return value;
+    }, z.boolean())
+    .default(false),
+  RESOLVER_BASE_URL: z.string().url().default("http://127.0.0.1:8080"),
+  RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info")
 });
 
