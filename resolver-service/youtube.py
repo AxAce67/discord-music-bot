@@ -55,12 +55,19 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
         "--format",
         "bestaudio/best",
         "--no-warnings",
-        "--no-call-home",
     ]
 
     cookies_file = os.getenv("YTDLP_COOKIES_FILE")
     if cookies_file:
         command.extend(["--cookies", cookies_file])
+
+    extractor_args = os.getenv("YTDLP_EXTRACTOR_ARGS")
+    if extractor_args:
+        command.extend(["--extractor-args", extractor_args])
+
+    sleep_interval = os.getenv("YTDLP_SLEEP_INTERVAL_SECONDS")
+    if sleep_interval:
+        command.extend(["--sleep-requests", sleep_interval])
 
     command.append(identifier)
 
