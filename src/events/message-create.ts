@@ -3,6 +3,7 @@ import type pino from "pino";
 import { createPrefixContext } from "../commands/context.js";
 import { MusicCommandHandler } from "../commands/music-command-handler.js";
 import { LocalizationService } from "../i18n/localization-service.js";
+import { buildErrorEmbed } from "../ui/error-embed.js";
 
 export function registerMessageCreateHandler(
   client: Client,
@@ -21,6 +22,12 @@ export function registerMessageCreateHandler(
       const [command, ...args] = message.content.slice(prefix.length).trim().split(/\s+/);
 
       switch (command?.toLowerCase()) {
+        case "help":
+          await handler.handleHelp(context);
+          break;
+        case "stats":
+          await handler.handleStats(context);
+          break;
         case "join":
           await handler.handleJoin(context);
           break;
@@ -59,7 +66,10 @@ export function registerMessageCreateHandler(
       logger.error({ err: error }, "Prefix command handling failed");
       const language = await localizationService.getLanguage(message.guildId).catch(() => "ja" as const);
       const messageText = localizationService.translateError(language, error);
-      await message.reply(messageText);
+      const sent = await message.reply({ embeds: [buildErrorEmbed(messageText)] });
+      setTimeout(() => {
+        void sent.delete().catch(() => undefined);
+      }, 5000);
     }
   });
 }

@@ -14,6 +14,16 @@ export interface SettingsRepository {
   saveSettings(settings: GuildSettings): Promise<void>;
 }
 
+export interface BotStatsSnapshot {
+  totalPlayCount: number;
+  uniqueTrackCount: number;
+}
+
+export interface StatsRepository {
+  recordTrackPlay(trackId: string): Promise<void>;
+  getStats(): Promise<BotStatsSnapshot>;
+}
+
 function mapTrack(row: Record<string, unknown>): QueueTrack {
   return {
     trackId: String(row.track_id),
@@ -202,6 +212,41 @@ export class SqliteSettingsRepository implements SettingsRepository {
   }
 }
 
+export class SqliteStatsRepository implements StatsRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async recordTrackPlay(trackId: string): Promise<void> {
+    await this.db.exec("BEGIN");
+
+    try {
+      await this.db.run(`UPDATE bot_stats SET total_play_count = total_play_count + 1 WHERE id = 1`);
+      await this.db.run(
+        `INSERT OR IGNORE INTO played_tracks (track_id, first_played_at) VALUES (?, ?)`,
+        trackId,
+        Date.now()
+      );
+      await this.db.exec("COMMIT");
+    } catch (error) {
+      await this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async getStats(): Promise<BotStatsSnapshot> {
+    const statsRow = await this.db.get<{ total_play_count: number }>(
+      `SELECT total_play_count FROM bot_stats WHERE id = 1`
+    );
+    const uniqueRow = await this.db.get<{ count: number }>(
+      `SELECT COUNT(*) as count FROM played_tracks`
+    );
+
+    return {
+      totalPlayCount: statsRow?.total_play_count ?? 0,
+      uniqueTrackCount: uniqueRow?.count ?? 0
+    };
+  }
+}
+
 export class InMemoryQueueRepository implements QueueRepository {
   private readonly queues = new Map<string, GuildQueueState>();
 
@@ -240,6 +285,23 @@ export class InMemorySettingsRepository implements SettingsRepository {
 
   async saveSettings(settings: GuildSettings): Promise<void> {
     this.settings.set(settings.guildId, settings);
+  }
+}
+
+export class InMemoryStatsRepository implements StatsRepository {
+  private totalPlayCount = 0;
+  private readonly uniqueTrackIds = new Set<string>();
+
+  async recordTrackPlay(trackId: string): Promise<void> {
+    this.totalPlayCount += 1;
+    this.uniqueTrackIds.add(trackId);
+  }
+
+  async getStats(): Promise<BotStatsSnapshot> {
+    return {
+      totalPlayCount: this.totalPlayCount,
+      uniqueTrackCount: this.uniqueTrackIds.size
+    };
   }
 }
 

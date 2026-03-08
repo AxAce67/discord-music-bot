@@ -50,12 +50,23 @@ export async function createDatabase(databaseUrl: string): Promise<SqliteDatabas
       encoded_track TEXT NOT NULL,
       PRIMARY KEY (guild_id, position, is_current)
     );
+
+    CREATE TABLE IF NOT EXISTS bot_stats (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      total_play_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS played_tracks (
+      track_id TEXT PRIMARY KEY,
+      first_played_at INTEGER NOT NULL
+    );
   `);
 
   await ensureColumn(db, "guild_queue_state", "is_paused", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn(db, "guild_queue_state", "repeat_mode", "TEXT NOT NULL DEFAULT 'off'");
   await ensureColumn(db, "guild_settings", "language", "TEXT NOT NULL DEFAULT 'ja'");
   await ensureColumn(db, "guild_queue_tracks", "artwork_url", "TEXT");
+  await db.run(`INSERT OR IGNORE INTO bot_stats (id, total_play_count) VALUES (1, 0)`);
 
   return db;
 }

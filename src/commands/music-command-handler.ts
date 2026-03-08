@@ -7,9 +7,15 @@ import { SearchPickerService } from "../ui/search-picker.js";
 import { MusicBotError } from "../errors/music-error.js";
 import { buildPlayConfirmationEmbed } from "../ui/play-confirmation.js";
 import { buildPlaylistConfirmationEmbed } from "../ui/playlist-confirmation.js";
+import { buildHelpEmbed } from "../ui/help-embed.js";
+import { buildStatusEmbed } from "../ui/status-embed.js";
+import { buildStatsEmbed } from "../ui/stats-embed.js";
 import { LocalizationService, isLanguageCode } from "../i18n/localization-service.js";
+import type { BotStatsService } from "../stats/bot-stats-service.js";
 
 export const slashCommandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
+  new SlashCommandBuilder().setName("help").setDescription("使い方と主なコマンドを表示します。").toJSON(),
+  new SlashCommandBuilder().setName("stats").setDescription("bot の利用状況を表示します。").toJSON(),
   new SlashCommandBuilder().setName("join").setDescription("ボイスチャンネルに参加します。").toJSON(),
   new SlashCommandBuilder()
     .setName("play")
@@ -50,8 +56,52 @@ export class MusicCommandHandler {
     private readonly uiService: MusicUiService,
     private readonly queueViewer: QueueViewerService,
     private readonly searchPicker: SearchPickerService,
-    private readonly localizationService: LocalizationService
+    private readonly localizationService: LocalizationService,
+    private readonly botStatsService: BotStatsService
   ) {}
+
+  async handleHelp(context: CommandContext): Promise<void> {
+    const language = await this.localizationService.getLanguage(context.guildId);
+    const embed = buildHelpEmbed(language);
+
+    if (context.interaction) {
+      if (context.interaction.replied || context.interaction.deferred) {
+        await context.interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      } else {
+        await context.interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      }
+      return;
+    }
+
+    if ("send" in context.textChannel) {
+      await context.textChannel.send({ embeds: [embed] });
+      return;
+    }
+
+    await context.reply(embed.data.description ?? "");
+  }
+
+  async handleStats(context: CommandContext): Promise<void> {
+    const language = await this.localizationService.getLanguage(context.guildId);
+    const stats = await this.botStatsService.getView(context.client);
+    const embed = buildStatsEmbed(language, stats);
+
+    if (context.interaction) {
+      if (context.interaction.replied || context.interaction.deferred) {
+        await context.interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      } else {
+        await context.interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      }
+      return;
+    }
+
+    if ("send" in context.textChannel) {
+      await context.textChannel.send({ embeds: [embed] });
+      return;
+    }
+
+    await context.reply(embed.data.description ?? "");
+  }
 
   async handleJoin(context: CommandContext): Promise<void> {
     const text = await this.localizationService.getMessages(context.guildId);
@@ -63,10 +113,14 @@ export class MusicCommandHandler {
       textChannelId: context.textChannel.id,
       shardId: context.shardId
     });
-    await context.reply(text.vcJoined);
+    await this.sendStatusReply(context, text.vcJoined);
   }
 
   async handlePlay(context: CommandContext, query: string): Promise<void> {
+    if (!query.trim()) {
+      throw new MusicBotError("QUERY_REQUIRED", "曲名またはURLを入力してください");
+    }
+
     const voiceChannelId = requireVoice(context);
     await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
 
@@ -103,6 +157,10 @@ export class MusicCommandHandler {
   }
 
   async handlePlaylist(context: CommandContext, query: string): Promise<void> {
+    if (!query.trim()) {
+      throw new MusicBotError("PLAYLIST_URL_REQUIRED", "YouTubeプレイリストURLを入力してください");
+    }
+
     const voiceChannelId = requireVoice(context);
     await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
 
@@ -135,30 +193,38 @@ export class MusicCommandHandler {
     await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
     await this.musicService.skip(context.guildId);
     await this.syncControlMessage(context, true);
-    await context.reply(text.trackSkipped, context.source === "button");
+    await this.sendStatusReply(context, text.trackSkipped, context.source !== "prefix");
   }
 
   async handlePause(context: CommandContext): Promise<void> {
     const text = await this.localizationService.getMessages(context.guildId);
-    const voiceChannelId = requireVoice(context);
-    await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
     const queue = await this.musicService.getQueue(context.guildId);
 
     if (!queue.currentTrack && queue.upcomingTracks.length > 0) {
+      if (!context.voiceChannelId) {
+        throw new MusicBotError(
+          "RESUME_VOICE_REQUIRED",
+          "先にVCへ参加してください\n参加してから `再開` ボタンを押すか !play 曲名 または !play URL を入力してください"
+        );
+      }
+
+      await ensureControllableVoiceState(this.musicService, context, context.voiceChannelId);
       await this.musicService.resumeFromQueue({
         guildId: context.guildId,
-        voiceChannelId,
+        voiceChannelId: context.voiceChannelId,
         textChannelId: context.textChannel.id,
         shardId: context.shardId
       });
       await this.syncControlMessage(context, true);
-      await context.reply(text.resumedFromQueue, context.source === "button");
+      await this.sendStatusReply(context, text.resumedFromQueue, context.source !== "prefix");
       return;
     }
 
+    const voiceChannelId = requireVoice(context);
+    await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
     const state = await this.musicService.togglePause(context.guildId);
     await this.syncControlMessage(context, true);
-    await context.reply(state.isPaused ? text.paused : text.resumed, context.source === "button");
+    await this.sendStatusReply(context, state.isPaused ? text.paused : text.resumed, context.source !== "prefix");
   }
 
   async handleRepeat(context: CommandContext): Promise<void> {
@@ -169,7 +235,8 @@ export class MusicCommandHandler {
     await this.syncControlMessage(context, true);
 
     if (context.source !== "button") {
-      await context.reply(
+      await this.sendStatusReply(
+        context,
         state.repeatMode === "track" ? text.repeatOn : text.repeatOff,
         context.source !== "prefix"
       );
@@ -184,7 +251,8 @@ export class MusicCommandHandler {
     await this.syncControlMessage(context, true);
 
     if (context.source !== "button") {
-      await context.reply(
+      await this.sendStatusReply(
+        context,
         state.upcomingTracks.length > 1 ? text.shuffled : text.shuffleInsufficient,
         context.source !== "prefix"
       );
@@ -197,7 +265,7 @@ export class MusicCommandHandler {
     await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
     await this.musicService.stop(context.guildId);
     await this.syncControlMessage(context, true);
-    await context.reply(text.stopped, context.source === "button");
+    await this.sendStatusReply(context, text.stopped, context.source !== "prefix");
   }
 
   async handleQueue(context: CommandContext): Promise<void> {
@@ -209,7 +277,7 @@ export class MusicCommandHandler {
     }
 
     await this.queueViewer.create(context.textChannel, context.guildId, context.userId);
-    await context.reply(text.queueShown);
+    await this.sendStatusReply(context, text.queueShown);
   }
 
   async handleLeave(context: CommandContext): Promise<void> {
@@ -218,7 +286,7 @@ export class MusicCommandHandler {
     await ensureControllableVoiceState(this.musicService, context, voiceChannelId);
     await this.uiService.deleteControlMessage(context.guildId);
     await this.musicService.leave(context.guildId);
-    await context.reply(text.leftVoice, context.source === "button");
+    await this.sendStatusReply(context, text.leftVoice, context.source !== "prefix");
   }
 
   async handleLang(context: CommandContext, languageInput: string): Promise<void> {
@@ -230,7 +298,7 @@ export class MusicCommandHandler {
     await this.localizationService.setLanguage(context.guildId, languageInput);
     await this.uiService.refreshControlMessage(context.guildId).catch(() => undefined);
     const text = await this.localizationService.getMessages(context.guildId);
-    await context.reply(text.languageSet(text.languageName), context.source !== "prefix");
+    await this.sendStatusReply(context, text.languageSet(text.languageName), context.source !== "prefix");
   }
 
   private async sendPlayConfirmation(
@@ -298,6 +366,29 @@ export class MusicCommandHandler {
     const message = await context.textChannel.send({ embeds: [embed] });
     setTimeout(() => {
       void message.delete().catch(() => undefined);
+    }, 5000);
+  }
+
+  private async sendStatusReply(context: CommandContext, message: string, ephemeral = false): Promise<void> {
+    const embed = buildStatusEmbed(message);
+
+    if (context.interaction) {
+      if (context.interaction.replied || context.interaction.deferred) {
+        await context.interaction.followUp({ embeds: [embed], ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });
+      } else {
+        await context.interaction.reply({ embeds: [embed], ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });
+      }
+      return;
+    }
+
+    if (!("send" in context.textChannel)) {
+      await context.reply(message);
+      return;
+    }
+
+    const sent = await context.textChannel.send({ embeds: [embed] });
+    setTimeout(() => {
+      void sent.delete().catch(() => undefined);
     }, 5000);
   }
 }

@@ -3,6 +3,7 @@ import type pino from "pino";
 import type { AudioBackend, ResolvedTrack } from "../audio/audio-backend.js";
 import type { QueueRepository } from "../storage/repositories.js";
 import { loadOrCreateQueueState } from "../storage/repositories.js";
+import type { BotStatsService } from "../stats/bot-stats-service.js";
 import { MusicBotError } from "../errors/music-error.js";
 import type {
   GuildQueueState,
@@ -31,6 +32,7 @@ export interface MusicService {
   skip(guildId: string): Promise<QueueTrack | null>;
   stop(guildId: string): Promise<void>;
   leave(guildId: string): Promise<void>;
+  disconnectKeepingQueue(guildId: string): Promise<GuildQueueState>;
   resume(guildId: string, shardId: number): Promise<void>;
   normalizeRecoveredQueue(guildId: string): Promise<GuildQueueState>;
   getQueue(guildId: string): Promise<GuildQueueState>;
@@ -65,6 +67,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   constructor(
     private readonly queueRepository: QueueRepository,
     private readonly audioBackend: AudioBackend,
+    private readonly botStatsService: BotStatsService,
     private readonly logger: pino.Logger
   ) {
     super();
@@ -270,6 +273,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     }
 
     await this.audioBackend.play(context.guildId, nextTrack.encodedTrack);
+    await this.botStatsService.recordTrackPlay(nextTrack.trackId);
     await this.queueRepository.saveQueue(state);
     return state;
   }
@@ -297,6 +301,14 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     this.clearTrackFailureRecovery(guildId);
     await this.audioBackend.leave(guildId);
     await this.queueRepository.deleteQueue(guildId);
+  }
+
+  async disconnectKeepingQueue(guildId: string): Promise<GuildQueueState> {
+    this.logger.info({ guildId }, "Leaving voice channel and keeping queue");
+    this.clearTrackFailureRecovery(guildId);
+    await this.audioBackend.leave(guildId);
+    const state = await this.getQueue(guildId);
+    return this.normalizeDisconnectedState(state);
   }
 
   async resume(guildId: string, shardId: number): Promise<void> {
@@ -427,6 +439,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       state.isStopped = false;
       state.updatedAt = Date.now();
       await this.audioBackend.play(guildId, state.currentTrack.encodedTrack);
+      await this.botStatsService.recordTrackPlay(state.currentTrack.trackId);
       await this.queueRepository.saveQueue(state);
       return;
     }
@@ -441,10 +454,18 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     if (nextTrack) {
       this.logger.info({ guildId, trackTitle: nextTrack.title }, "Advancing to next track");
       await this.audioBackend.play(guildId, nextTrack.encodedTrack);
-      this.emit("trackAdvanced", guildId);
+      await this.botStatsService.recordTrackPlay(nextTrack.trackId);
     }
 
     await this.queueRepository.saveQueue(state);
+
+    if (nextTrack) {
+      this.emit("trackAdvanced", guildId);
+      return;
+    }
+
+    this.logger.info({ guildId }, "Queue finished, switching to idle control state");
+    this.emit("queueEnded", guildId);
   }
 
   private async handleVoiceDisconnected(guildId: string): Promise<void> {
@@ -535,6 +556,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       state.isStopped = false;
       this.logger.info({ guildId: context.guildId, trackTitle: queueTrack.title }, "Playing track immediately");
       await this.audioBackend.play(context.guildId, queueTrack.encodedTrack);
+      await this.botStatsService.recordTrackPlay(queueTrack.trackId);
     } else {
       this.logger.info({ guildId: context.guildId, trackTitle: queueTrack.title }, "Appending track to queue");
       state.upcomingTracks.push(queueTrack);

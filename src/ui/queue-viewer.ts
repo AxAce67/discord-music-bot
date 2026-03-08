@@ -16,6 +16,8 @@ import type { MusicService } from "../queue/music-service.js";
 import type { QueueTrack } from "../types/music.js";
 import { MusicBotError } from "../errors/music-error.js";
 import { LocalizationService } from "../i18n/localization-service.js";
+import { buildStatusEmbed } from "./status-embed.js";
+import { buildQueueRemoveConfirmationEmbed } from "./queue-remove-confirmation.js";
 
 type QueueViewerAction = "prev" | "next" | "remove" | "close";
 type QueueViewerButtonId = `queueview:${QueueViewerAction}:${string}`;
@@ -116,10 +118,13 @@ export class QueueViewerService {
 
         const removed = await this.musicService.removeUpcomingTrack(session.guildId, session.selectedQueueIndex);
         session.selectedQueueIndex = null;
-        await interaction.reply({
-          content: (await this.localizationService.getMessages(session.guildId)).queueRemoved(removed.title),
+        const language = await this.localizationService.getLanguage(session.guildId);
+        await interaction.update(await this.render(session));
+        await interaction.followUp({
+          embeds: [buildQueueRemoveConfirmationEmbed(language, removed.title)],
           flags: MessageFlags.Ephemeral
         });
+        return true;
         break;
       case "close":
         this.sessions.delete(interaction.message.id);
@@ -286,9 +291,9 @@ function parseQueueViewerSelectId(customId: string): { guildId: string } | null 
 
 async function safeReply(interaction: ButtonInteraction | StringSelectMenuInteraction, content: string): Promise<void> {
   if (interaction.replied || interaction.deferred) {
-    await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ embeds: [buildStatusEmbed(content)], flags: MessageFlags.Ephemeral });
   } else {
-    await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [buildStatusEmbed(content)], flags: MessageFlags.Ephemeral });
   }
 }
 

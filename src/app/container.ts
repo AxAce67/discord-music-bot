@@ -2,7 +2,7 @@ import { Client, GatewayIntentBits, Partials } from "discord.js";
 import type pino from "pino";
 import type { AppConfig } from "../config/env.js";
 import { createDatabase } from "../storage/database.js";
-import { SqliteQueueRepository, SqliteSettingsRepository } from "../storage/repositories.js";
+import { SqliteQueueRepository, SqliteSettingsRepository, SqliteStatsRepository } from "../storage/repositories.js";
 import { LavalinkAudioBackend } from "../audio/lavalink-audio-backend.js";
 import { DefaultMusicService } from "../queue/music-service.js";
 import { DiscordMusicUiService } from "../ui/music-ui-service.js";
@@ -10,6 +10,7 @@ import { QueueViewerService } from "../ui/queue-viewer.js";
 import { SearchPickerService } from "../ui/search-picker.js";
 import { MusicCommandHandler } from "../commands/music-command-handler.js";
 import { LocalizationService } from "../i18n/localization-service.js";
+import { BotStatsService } from "../stats/bot-stats-service.js";
 
 export interface AppContainer {
   client: Client;
@@ -19,6 +20,7 @@ export interface AppContainer {
   queueViewer: QueueViewerService;
   searchPicker: SearchPickerService;
   localizationService: LocalizationService;
+  botStatsService: BotStatsService;
 }
 
 export async function createAppContainer(config: AppConfig, logger: pino.Logger): Promise<AppContainer> {
@@ -35,21 +37,24 @@ export async function createAppContainer(config: AppConfig, logger: pino.Logger)
   const database = await createDatabase(config.DATABASE_URL);
   const queueRepository = new SqliteQueueRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database, config.BOT_PREFIX);
+  const statsRepository = new SqliteStatsRepository(database);
   const localizationService = new LocalizationService(settingsRepository);
+  const botStatsService = new BotStatsService(statsRepository);
 
   const audioBackend = new LavalinkAudioBackend(client, config, logger);
-  const musicService = new DefaultMusicService(queueRepository, audioBackend, logger);
+  const musicService = new DefaultMusicService(queueRepository, audioBackend, botStatsService, logger);
   const uiService = new DiscordMusicUiService(client, musicService, localizationService, logger);
   const queueViewer = new QueueViewerService(musicService, localizationService);
   const searchPicker = new SearchPickerService(musicService, uiService, localizationService);
 
   return {
     client,
-    musicHandler: new MusicCommandHandler(musicService, uiService, queueViewer, searchPicker, localizationService),
+    musicHandler: new MusicCommandHandler(musicService, uiService, queueViewer, searchPicker, localizationService, botStatsService),
     musicService,
     uiService,
     queueViewer,
     searchPicker,
-    localizationService
+    localizationService,
+    botStatsService
   };
 }

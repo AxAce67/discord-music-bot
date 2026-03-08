@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { DefaultMusicService } from "../src/queue/music-service.js";
-import { InMemoryQueueRepository } from "../src/storage/repositories.js";
+import { InMemoryQueueRepository, InMemoryStatsRepository } from "../src/storage/repositories.js";
 import type { JoinVoiceRequest, ResolvedTrack } from "../src/audio/audio-backend.js";
 import { AudioBackend } from "../src/audio/audio-backend.js";
 import pino from "pino";
+import { BotStatsService } from "../src/stats/bot-stats-service.js";
 
 class FakeAudioBackend extends AudioBackend {
   public readonly plays: string[] = [];
@@ -88,12 +89,17 @@ class FakeAudioBackend extends AudioBackend {
 }
 
 describe("DefaultMusicService", () => {
-  it("plays immediately when the queue is empty", async () => {
-    const service = new DefaultMusicService(
+  function createService(audio: FakeAudioBackend) {
+    return new DefaultMusicService(
       new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
+      audio,
+      new BotStatsService(new InMemoryStatsRepository()),
       pino({ enabled: false })
     );
+  }
+
+  it("plays immediately when the queue is empty", async () => {
+    const service = createService(new FakeAudioBackend());
 
     const track = await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -109,7 +115,7 @@ describe("DefaultMusicService", () => {
 
   it("queues a second track while a track is already playing", async () => {
     const audio = new FakeAudioBackend();
-    const service = new DefaultMusicService(new InMemoryQueueRepository(), audio, pino({ enabled: false }));
+    const service = createService(audio);
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -128,7 +134,7 @@ describe("DefaultMusicService", () => {
 
   it("enqueues all tracks from a playlist", async () => {
     const audio = new FakeAudioBackend();
-    const service = new DefaultMusicService(new InMemoryQueueRepository(), audio, pino({ enabled: false }));
+    const service = createService(audio);
 
     await service.enqueuePlaylist(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -143,11 +149,7 @@ describe("DefaultMusicService", () => {
   });
 
   it("advances to the next track on skip", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
-    );
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -165,11 +167,7 @@ describe("DefaultMusicService", () => {
   });
 
   it("clears the queue on stop", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
-    );
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -183,12 +181,31 @@ describe("DefaultMusicService", () => {
     expect(queue.isStopped).toBe(true);
   });
 
-  it("toggles pause state", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
+  it("disconnects while keeping the queue", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio);
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
     );
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-2", requestedBy: "user-2", requestedAt: Date.now() }
+    );
+
+    const state = await service.disconnectKeepingQueue("guild-1");
+
+    expect(state.currentTrack).toBeNull();
+    expect(state.upcomingTracks).toHaveLength(2);
+    expect(state.upcomingTracks[0]?.title).toBe("Test Track song-1");
+    expect(state.voiceChannelId).toBeNull();
+    expect(state.isStopped).toBe(true);
+    expect(audio.connected).toBe(false);
+  });
+
+  it("toggles pause state", async () => {
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -203,11 +220,7 @@ describe("DefaultMusicService", () => {
   });
 
   it("toggles repeat mode", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
-    );
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -222,11 +235,7 @@ describe("DefaultMusicService", () => {
   });
 
   it("shuffles only upcoming tracks", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
-    );
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -251,11 +260,7 @@ describe("DefaultMusicService", () => {
   });
 
   it("turns repeat off when skipping", async () => {
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      new FakeAudioBackend(),
-      pino({ enabled: false })
-    );
+    const service = createService(new FakeAudioBackend());
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -277,11 +282,7 @@ describe("DefaultMusicService", () => {
   it("recovers to the next track after a track exception", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudioBackend();
-    const service = new DefaultMusicService(
-      new InMemoryQueueRepository(),
-      audio,
-      pino({ enabled: false })
-    );
+    const service = createService(audio);
 
     await service.enqueue(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
@@ -301,5 +302,29 @@ describe("DefaultMusicService", () => {
     expect(queue.repeatMode).toBe("off");
 
     vi.useRealTimers();
+  });
+
+  it("records total and unique track stats when tracks start", async () => {
+    const statsRepository = new InMemoryStatsRepository();
+    const service = new DefaultMusicService(
+      new InMemoryQueueRepository(),
+      new FakeAudioBackend(),
+      new BotStatsService(statsRepository),
+      pino({ enabled: false })
+    );
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-2", requestedBy: "user-2", requestedAt: Date.now() }
+    );
+    await service.skip("guild-1");
+
+    const stats = await statsRepository.getStats();
+    expect(stats.totalPlayCount).toBe(2);
+    expect(stats.uniqueTrackCount).toBe(2);
   });
 });

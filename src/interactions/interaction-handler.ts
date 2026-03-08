@@ -7,6 +7,7 @@ import { MusicBotError } from "../errors/music-error.js";
 import { QueueViewerService } from "../ui/queue-viewer.js";
 import { SearchPickerService } from "../ui/search-picker.js";
 import { LocalizationService } from "../i18n/localization-service.js";
+import { buildErrorEmbed } from "../ui/error-embed.js";
 
 export function registerInteractionHandler(
   client: Client,
@@ -52,6 +53,12 @@ async function handleChatInput(interaction: ChatInputCommandInteraction, handler
   const context = await createSlashContext(interaction);
 
   switch (interaction.commandName) {
+    case "help":
+      await handler.handleHelp(context);
+      break;
+    case "stats":
+      await handler.handleStats(context);
+      break;
     case "join":
       await handler.handleJoin(context);
       break;
@@ -145,8 +152,8 @@ async function replyInteractionError(
       : "ja";
   const message = localizationService.translateError(language, error);
   if (interaction.replied || interaction.deferred) {
-    await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ embeds: [buildErrorEmbed(message)], flags: MessageFlags.Ephemeral });
   } else {
-    await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [buildErrorEmbed(message)], flags: MessageFlags.Ephemeral });
   }
 }
