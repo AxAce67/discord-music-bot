@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class PlaybackSource:
-    upstream_url: str
+    source_url: str
+    upstream_url: str | None
     headers: dict[str, str]
     expires_at: float
 
@@ -17,10 +18,15 @@ STREAM_TTL_SECONDS = int(os.getenv("RESOLVER_STREAM_TTL_SECONDS", "900"))
 _registry: dict[str, PlaybackSource] = {}
 
 
-def register_playback_source(upstream_url: str, headers: dict[str, str] | None = None) -> str:
+def register_playback_source(
+    source_url: str,
+    upstream_url: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> str:
     cleanup_expired_sources()
     token = secrets.token_urlsafe(24)
     _registry[token] = PlaybackSource(
+        source_url=source_url,
         upstream_url=upstream_url,
         headers=sanitize_headers(headers or {}),
         expires_at=time.time() + STREAM_TTL_SECONDS,

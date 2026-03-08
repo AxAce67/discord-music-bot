@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -12,7 +13,7 @@ from starlette.responses import Response, StreamingResponse
 from errors import ResolverError
 from models import HealthResponse, ResolvePlaylistRequest, ResolveRequest, SearchRequest, TracksResponse
 from streams import get_playback_source
-from youtube import resolve_playlist, resolve_track, search_tracks
+from youtube import get_stream_command, resolve_playlist, resolve_track, search_tracks
 
 
 def configure_logging() -> None:
@@ -57,6 +58,17 @@ async def stream_media(token: str, request: Request) -> Response:
     if source is None:
         return JSONResponse(status_code=404, content={"error": {"code": "STREAM_NOT_FOUND", "message": "Stream not found"}})
 
+    direct_response = await try_open_upstream_stream(source, request)
+    if direct_response is not None:
+        return direct_response
+
+    return await stream_via_yt_dlp(source.source_url, request)
+
+
+async def try_open_upstream_stream(source, request: Request) -> Response | None:
+    if not source.upstream_url:
+        return None
+
     headers = dict(source.headers)
     forwarded_range = request.headers.get("range")
     if forwarded_range:
@@ -65,6 +77,10 @@ async def stream_media(token: str, request: Request) -> Response:
     client = httpx.AsyncClient(follow_redirects=True, timeout=None)
     request_object = client.build_request(request.method, source.upstream_url, headers=headers)
     upstream = await client.send(request_object, stream=True)
+    if upstream.status_code >= 400:
+        await upstream.aclose()
+        await client.aclose()
+        return None
 
     response_headers = {
         header: value
@@ -86,6 +102,58 @@ async def stream_media(token: str, request: Request) -> Response:
     )
 
 
+async def stream_via_yt_dlp(source_url: str, request: Request) -> Response:
+    if request.method == "HEAD":
+        return Response(status_code=200, headers={"content-type": "application/octet-stream"})
+
+    process = await asyncio.create_subprocess_exec(
+        *get_stream_command(source_url),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    if process.stdout is None or process.stderr is None:
+        raise ResolverError("UPSTREAM_FAILED", "yt-dlp stream could not be opened", 502)
+
+    return StreamingResponse(
+        iter_process_stdout(process),
+        status_code=200,
+        media_type="application/octet-stream",
+        background=BackgroundTask(close_process_stream, process),
+    )
+
+
 async def close_upstream_stream(response: httpx.Response, client: httpx.AsyncClient) -> None:
     await response.aclose()
     await client.aclose()
+
+
+async def iter_process_stdout(process: asyncio.subprocess.Process):
+    if process.stdout is None:
+        return
+
+    while True:
+        chunk = await process.stdout.read(65536)
+        if not chunk:
+            break
+        yield chunk
+
+
+async def close_process_stream(process: asyncio.subprocess.Process) -> None:
+    stderr_output = b""
+    if process.stderr is not None:
+        try:
+            stderr_output = await asyncio.wait_for(process.stderr.read(), timeout=1)
+        except TimeoutError:
+            stderr_output = b""
+
+    if process.returncode is None:
+        process.kill()
+        await process.wait()
+
+    if process.returncode not in (0, None):
+        logging.getLogger("resolver.stream").warning(
+            "yt-dlp stream process exited with code %s: %s",
+            process.returncode,
+            stderr_output.decode("utf-8", errors="ignore").strip(),
+        )

@@ -50,28 +50,13 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
 
 def run_yt_dlp(identifier: str) -> dict[str, Any]:
     command = [
-        os.getenv("YTDLP_BINARY", "yt-dlp"),
+        *get_common_yt_dlp_command(),
         "--dump-single-json",
         "--skip-download",
         "--format",
         "bestaudio/best",
-        "--no-warnings",
+        identifier,
     ]
-
-    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
-    if cookies_file:
-        command.extend(["--cookies", cookies_file])
-
-    extractor_args = os.getenv("YTDLP_EXTRACTOR_ARGS")
-    if extractor_args:
-        for extractor_arg in split_env_list(extractor_args):
-            command.extend(["--extractor-args", extractor_arg])
-
-    sleep_interval = os.getenv("YTDLP_SLEEP_INTERVAL_SECONDS")
-    if sleep_interval:
-        command.extend(["--sleep-requests", sleep_interval])
-
-    command.append(identifier)
 
     try:
         completed = subprocess.run(
@@ -120,7 +105,11 @@ def map_track(payload: dict[str, Any]) -> TrackPayload | None:
     duration = int(payload.get("duration") or 0)
 
     playback_url, playback_headers = extract_playback_source(payload)
-    proxied_playback_url = register_playback_source(playback_url, playback_headers) if playback_url else None
+    proxied_playback_url = (
+        register_playback_source(normalize_track_url(str(webpage_url)), playback_url, playback_headers)
+        if playback_url
+        else None
+    )
 
     return TrackPayload(
         trackId=f"youtube:{video_id}",
@@ -221,6 +210,39 @@ def extract_playback_source(payload: dict[str, Any]) -> tuple[str | None, dict[s
         return direct_url, normalize_headers(payload.get("http_headers"))
 
     return None, {}
+
+
+def get_stream_command(identifier: str) -> list[str]:
+    return [
+        *get_common_yt_dlp_command(),
+        "--format",
+        "bestaudio/best",
+        "--output",
+        "-",
+        identifier,
+    ]
+
+
+def get_common_yt_dlp_command() -> list[str]:
+    command = [
+        os.getenv("YTDLP_BINARY", "yt-dlp"),
+        "--no-warnings",
+    ]
+
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        command.extend(["--cookies", cookies_file])
+
+    extractor_args = os.getenv("YTDLP_EXTRACTOR_ARGS")
+    if extractor_args:
+        for extractor_arg in split_env_list(extractor_args):
+            command.extend(["--extractor-args", extractor_arg])
+
+    sleep_interval = os.getenv("YTDLP_SLEEP_INTERVAL_SECONDS")
+    if sleep_interval:
+        command.extend(["--sleep-requests", sleep_interval])
+
+    return command
 
 
 def split_env_list(value: str) -> list[str]:
