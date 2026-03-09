@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from errors import ResolverError
 from models import TrackPayload
@@ -190,16 +190,31 @@ def normalize_playlist_url(url: str) -> str:
         params = parse_qs(parsed.query)
         playlist_id = params.get("list", [None])[0]
         if playlist_id:
-            return f"https://www.youtube.com/playlist?list={playlist_id}"
+            query = [("list", playlist_id)]
+            index = params.get("index", [None])[0]
+            if index:
+                query.append(("index", index))
+            return f"https://www.youtube.com/playlist?{urlencode(query)}"
 
     if host in {"youtube.com", "m.youtube.com"} and parsed.path == "/watch":
         params = parse_qs(parsed.query)
         video_id = params.get("v", [None])[0]
         playlist_id = params.get("list", [None])[0]
         if video_id and playlist_id:
-            return f"https://www.youtube.com/watch?v={video_id}&list={playlist_id}"
+            query = [("v", video_id), ("list", playlist_id)]
+            index = params.get("index", [None])[0]
+            if index:
+                query.append(("index", index))
+            start_radio = params.get("start_radio", [None])[0]
+            if start_radio:
+                query.append(("start_radio", start_radio))
+            return f"https://www.youtube.com/watch?{urlencode(query)}"
         if playlist_id:
-            return f"https://www.youtube.com/playlist?list={playlist_id}"
+            query = [("list", playlist_id)]
+            index = params.get("index", [None])[0]
+            if index:
+                query.append(("index", index))
+            return f"https://www.youtube.com/playlist?{urlencode(query)}"
 
     return normalize_track_url(url)
 
