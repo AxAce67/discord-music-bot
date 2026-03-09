@@ -11,6 +11,7 @@ from youtube import (
     clear_resolver_caches,
     extract_playback_source,
     get_yt_dlp_timeout_seconds,
+    is_mix_playlist_url,
     map_track,
     normalize_playlist_url,
     resolve_playlist,
@@ -19,6 +20,10 @@ from youtube import (
 
 
 class NormalizePlaylistUrlTest(unittest.TestCase):
+    def test_detects_mix_playlist_urls(self) -> None:
+        self.assertTrue(is_mix_playlist_url("https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1"))
+        self.assertFalse(is_mix_playlist_url("https://www.youtube.com/playlist?list=PL12345"))
+
     def test_preserves_mix_watch_context(self) -> None:
         url = "https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1"
         self.assertEqual(
@@ -100,6 +105,10 @@ class PlaylistEntryMappingTest(unittest.TestCase):
         self.assertEqual(first[0].title, "Cached Track")
         self.assertEqual(second[0].title, "Cached Track")
         self.assertEqual(run_yt_dlp.call_count, 1)
+
+    def test_resolve_playlist_rejects_mix_urls(self) -> None:
+        with self.assertRaisesRegex(Exception, "Mix or Radio"):
+            resolve_playlist("https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1")
 
 
 if __name__ == "__main__":

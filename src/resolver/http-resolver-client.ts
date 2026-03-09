@@ -136,6 +136,13 @@ function mapResolverHttpError(status: number, payload: ResolverErrorPayload | nu
     return new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした");
   }
 
+  if (code === "PLAYLIST_UNSUPPORTED") {
+    return new MusicBotError(
+      "PLAYLIST_URL_REQUIRED",
+      "YouTube Mix / Radio URL は !playlist では扱えません。通常のプレイリストURLを使うか !play を使ってください。"
+    );
+  }
+
   if (code === "TIMEOUT") {
     return new MusicBotError("RESOLVER_UNAVAILABLE", "曲情報の取得サービスに接続できませんでした");
   }

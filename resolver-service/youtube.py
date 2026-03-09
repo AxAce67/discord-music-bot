@@ -54,6 +54,8 @@ def resolve_track(url: str) -> list[TrackPayload]:
 def resolve_playlist(url: str, *, offset: int = 0, limit: int = DEFAULT_PLAYLIST_PAGE_SIZE) -> tuple[list[TrackPayload], int, int | None]:
     if not is_playlist_url(url):
         raise ResolverError("BAD_REQUEST", "A playlist URL is required", 400)
+    if is_mix_playlist_url(url):
+        raise ResolverError("PLAYLIST_UNSUPPORTED", "YouTube Mix or Radio URLs are not supported on this endpoint", 400)
 
     normalized_url = normalize_playlist_url(url)
     raw_entries = get_cached_payload(_playlist_entries_cache, normalized_url)
@@ -180,6 +182,15 @@ def is_playlist_url(url: str) -> bool:
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
     return "list" in query
+
+
+def is_mix_playlist_url(url: str) -> bool:
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    playlist_id = query.get("list", [None])[0]
+    return bool(query.get("start_radio", [None])[0]) or (
+        isinstance(playlist_id, str) and playlist_id.startswith("RD")
+    )
 
 
 def has_video_id(url: str) -> bool:
