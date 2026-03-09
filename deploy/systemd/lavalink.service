@@ -1,0 +1,14 @@
+[Unit]
+Description=Lavalink Audio Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/music-bot/lavalink
+ExecStart=/usr/bin/java -jar /opt/music-bot/lavalink/Lavalink.jar
+Restart=always
+RestartSec=5
+User=REPLACE_ME
+
+[Install]
+WantedBy=multi-user.target

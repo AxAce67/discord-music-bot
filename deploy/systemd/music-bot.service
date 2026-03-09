@@ -1,0 +1,17 @@
+[Unit]
+Description=Kanade Discord Music Bot
+After=network.target lavalink.service
+Requires=lavalink.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/music-bot
+ExecStartPre=/usr/bin/bash -lc 'until nc -z 127.0.0.1 2333; do sleep 1; done'
+ExecStart=/usr/bin/node /opt/music-bot/dist/src/index.js
+Restart=always
+RestartSec=5
+User=REPLACE_ME
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
