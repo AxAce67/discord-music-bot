@@ -49,6 +49,10 @@ export const messages = {
     helpPlaylist: "`/playlist <url>` / `!playlist <url>`\nYouTube プレイリストをまとめてキューに追加します",
     helpControls: "`/pause` ` /skip` ` /stop` ` /queue` ` /leave`\n再生中の曲やキューを操作します",
     helpUtility: "`/repeat` ` /shuffle` ` /lang <ja|en>`\nリピート、シャッフル、表示言語の切り替えです",
+    helpMixNote:
+      "※ YouTube Mix / Radio (`RD...`) は動的プレイリストのため、ブラウザ表示と曲順・内容が完全一致しない場合があります",
+    playlistMixNote:
+      "※ YouTube Mix / Radio は動的プレイリストのため、ブラウザ表示と曲順・内容が完全一致しない場合があります",
     controlStopped: "⏹ 停止中",
     controlIdle: "🎶 待機中",
     controlPaused: "⏸ 一時停止中",
@@ -137,6 +141,10 @@ export const messages = {
     helpPlaylist: "`/playlist <url>` / `!playlist <url>`\nAdd a YouTube playlist to the queue",
     helpControls: "`/pause` ` /skip` ` /stop` ` /queue` ` /leave`\nControl the current track and queue",
     helpUtility: "`/repeat` ` /shuffle` ` /lang <ja|en>`\nToggle repeat, shuffle the queue, and switch language",
+    helpMixNote:
+      "Note: YouTube Mix / Radio (`RD...`) is dynamic, so track order and contents may not exactly match what you see in the browser",
+    playlistMixNote:
+      "Note: YouTube Mix / Radio is dynamic, so track order and contents may not exactly match what you see in the browser",
     controlStopped: "⏹ Stopped",
     controlIdle: "🎶 Idle",
     controlPaused: "⏸ Paused",

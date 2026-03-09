@@ -8,7 +8,7 @@ export function buildHelpEmbed(language: LanguageCode): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle(text.helpTitle)
     .setColor(0x495057)
-    .setDescription(text.helpDescription)
+    .setDescription(`${text.helpDescription}\n\n${text.helpMixNote}`)
     .addFields(
       { name: text.helpSectionPlay, value: text.helpPlay, inline: false },
       { name: text.helpSectionPlaylist, value: text.helpPlaylist, inline: false },

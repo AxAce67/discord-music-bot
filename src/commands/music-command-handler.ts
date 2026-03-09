@@ -184,7 +184,12 @@ export class MusicCommandHandler {
     );
 
     this.queueControlMessageSync(context, true);
-    await this.sendPlaylistConfirmation(context, playlist.totalCount, queueBeforeEnqueue.currentTrack === null);
+    await this.sendPlaylistConfirmation(
+      context,
+      playlist.totalCount,
+      queueBeforeEnqueue.currentTrack === null,
+      isYoutubeMixUrl(query)
+    );
   }
 
   async handleSkip(context: CommandContext): Promise<void> {
@@ -347,10 +352,11 @@ export class MusicCommandHandler {
   private async sendPlaylistConfirmation(
     context: CommandContext,
     trackCount: number,
-    startedPlaybackImmediately: boolean
+    startedPlaybackImmediately: boolean,
+    showMixNote = false
   ): Promise<void> {
     const language = await this.localizationService.getLanguage(context.guildId);
-    const embed = buildPlaylistConfirmationEmbed(language, trackCount, startedPlaybackImmediately);
+    const embed = buildPlaylistConfirmationEmbed(language, trackCount, startedPlaybackImmediately, showMixNote);
 
     if (context.interaction) {
       if (context.interaction.replied || context.interaction.deferred) {
@@ -413,6 +419,16 @@ function isPlaylistUrl(value: string): boolean {
       (url.hostname.includes("youtube.com") || url.hostname.includes("youtu.be")) &&
       url.searchParams.has("list")
     );
+  } catch {
+    return false;
+  }
+}
+
+function isYoutubeMixUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const list = url.searchParams.get("list") ?? "";
+    return list.startsWith("RD") || url.searchParams.get("start_radio") === "1";
   } catch {
     return false;
   }
