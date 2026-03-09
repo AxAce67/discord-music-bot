@@ -50,6 +50,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-bot.ps1
 
 `.env.example` を参照してください。
 
+Resolver を使わず、Pi 側の Lavalink をそのまま使う構成もできます。
+
+- `LAVALINK_HOST=<PiのVPN IP か LAN IP>`
+- `LAVALINK_PORT=2333`
+- `LAVALINK_PASSWORD=...`
+- `RESOLVER_ENABLED=false`
+
+この構成では bot は VPS に残したまま、YouTube への実アクセスだけを Pi 側 Lavalink に寄せられます。
+VPS の IP で YouTube に弾かれる環境では、まずこの構成を優先した方が単純で安定しやすいです。
+
 Resolver を使う場合は以下も設定します。
 
 - `RESOLVER_ENABLED=true`
@@ -71,6 +81,9 @@ YouTube 制限が強い環境では、resolver 側に `YTDLP_COOKIES_FILE=/opt/m
 1. `lavalink`
 2. `resolver-service`
 3. `music-bot`
+
+Resolver を使わず Pi 側 Lavalink を使う場合は、VPS 側で `music-bot` だけ起動すれば十分です。
+その代わり、Pi 側では Lavalink が先に起動している必要があります。
 
 ### PM2
 
@@ -144,5 +157,6 @@ WantedBy=multi-user.target
 - YouTube 再生は Lavalink 側の source/plugin 構成に依存します。
 - Resolver を有効にすると、曲名検索と YouTube URL 解決は `FastAPI + yt-dlp` 側で処理します。
 - `RESOLVER_ENABLED=false` にすると旧 Lavalink resolve 経路へ戻せます。
+- `createAppContainer()` は `RESOLVER_ENABLED` を見て、`LavalinkAudioBackend` と `ResolverBackedAudioBackend` を切り替えます。
 - Spotify の直接再生は未対応です。
 - ローカル検証用に `lavalink/Lavalink.jar` と `lavalink/application.yml` を同梱する前提です。
