@@ -109,7 +109,7 @@ describe("ResolverBackedAudioBackend", () => {
     expect(playback.resolveCalls).toEqual([]);
   });
 
-  it("hydrates playlist results and keeps successful entries", async () => {
+  it("returns lightweight playlist entries without hydrating them eagerly", async () => {
     const playback = new FakePlaybackBackend();
     const resolver = new FakeResolverClient(
       [],
@@ -136,13 +136,12 @@ describe("ResolverBackedAudioBackend", () => {
     const results = await backend.resolvePlaylist("https://www.youtube.com/playlist?list=abc");
 
     expect(results).toHaveLength(2);
-    expect(results.map((track) => track.encodedTrack)).toEqual([
-      "encoded:https://www.youtube.com/watch?v=one",
-      "encoded:https://www.youtube.com/watch?v=two"
-    ]);
+    expect(results.map((track) => track.encodedTrack)).toEqual([undefined, undefined]);
+    expect(results.map((track) => track.playbackIdentifier)).toEqual([undefined, undefined]);
+    expect(playback.resolveCalls).toEqual([]);
   });
 
-  it("prefers resolver track playback urls while hydrating playlist entries", async () => {
+  it("prefers resolver track playback urls while hydrating a direct track url", async () => {
     const playback = new FakePlaybackBackend();
     const resolver = new FakeResolverClient(
       [],
@@ -156,19 +155,11 @@ describe("ResolverBackedAudioBackend", () => {
           source: "youtube"
         }
       ],
-      [
-        {
-          trackId: "youtube:one",
-          title: "One",
-          url: "https://www.youtube.com/watch?v=one",
-          durationMs: 1000,
-          source: "youtube"
-        }
-      ]
+      []
     );
     const backend = new ResolverBackedAudioBackend(resolver, playback, pino({ enabled: false }));
 
-    const results = await backend.resolvePlaylist("https://www.youtube.com/playlist?list=abc");
+    const results = await backend.resolve("https://www.youtube.com/watch?v=one");
 
     expect(results).toHaveLength(1);
     expect(results[0]?.playbackIdentifier).toBe("https://resolver.example/stream/one");

@@ -44,7 +44,19 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
 
   async resolvePlaylist(query: string): Promise<ResolvedTrack[]> {
     const tracks = await this.resolverClient.resolvePlaylist(query);
-    return this.hydrateTracks(tracks, "PLAYLIST_NOT_FOUND", true);
+    if (tracks.length === 0) {
+      throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした");
+    }
+
+    return tracks.map((track) => ({
+      trackId: track.trackId,
+      title: track.title,
+      url: track.url,
+      durationMs: track.durationMs,
+      artworkUrl: track.artworkUrl,
+      playbackIdentifier: track.playbackUrl,
+      source: "youtube"
+    }));
   }
 
   async play(

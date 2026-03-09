@@ -28,6 +28,34 @@ class FakeAudioBackend extends AudioBackend {
 
   async resolve(query: string): Promise<ResolvedTrack[]> {
     const suffix = String(query);
+    if (suffix.endsWith("/playlist-1")) {
+      return [
+        {
+          trackId: "track-playlist-1",
+          title: "Playlist Track 1",
+          url: "https://example.com/playlist-1",
+          durationMs: 120000,
+          artworkUrl: "https://example.com/art.jpg",
+          encodedTrack: "encoded-playlist-1",
+          source: "youtube"
+        }
+      ];
+    }
+
+    if (suffix.endsWith("/playlist-2")) {
+      return [
+        {
+          trackId: "track-playlist-2",
+          title: "Playlist Track 2",
+          url: "https://example.com/playlist-2",
+          durationMs: 180000,
+          artworkUrl: "https://example.com/art.jpg",
+          encodedTrack: "encoded-playlist-2",
+          source: "youtube"
+        }
+      ];
+    }
+
     if (suffix.includes("playlist")) {
       return [
         {
@@ -65,6 +93,27 @@ class FakeAudioBackend extends AudioBackend {
   }
 
   async resolvePlaylist(query: string): Promise<ResolvedTrack[]> {
+    if (String(query).includes("playlist")) {
+      return [
+        {
+          trackId: "track-playlist-1",
+          title: "Playlist Track 1",
+          url: "https://example.com/playlist-1",
+          durationMs: 120000,
+          artworkUrl: "https://example.com/art.jpg",
+          source: "youtube"
+        },
+        {
+          trackId: "track-playlist-2",
+          title: "Playlist Track 2",
+          url: "https://example.com/playlist-2",
+          durationMs: 180000,
+          artworkUrl: "https://example.com/art.jpg",
+          source: "youtube"
+        }
+      ];
+    }
+
     return this.resolve(query);
   }
 

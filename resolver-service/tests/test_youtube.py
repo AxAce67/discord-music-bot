@@ -43,6 +43,7 @@ class PlaylistEntryMappingTest(unittest.TestCase):
         self.assertEqual(track.url, "https://www.youtube.com/watch?v=abc123")
         self.assertIsNone(track.playbackUrl)
         self.assertEqual(track.durationMs, 0)
+        self.assertEqual(track.artworkUrl, "https://i.ytimg.com/vi/abc123/hqdefault.jpg")
 
     def test_does_not_treat_youtube_watch_url_as_playback_source(self) -> None:
         playback_url, headers = extract_playback_source(

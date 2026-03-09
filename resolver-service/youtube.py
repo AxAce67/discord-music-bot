@@ -121,6 +121,11 @@ def map_track(payload: dict[str, Any]) -> TrackPayload | None:
         if playback_url
         else None
     )
+    artwork_url = (
+        str(payload.get("thumbnail"))
+        if payload.get("thumbnail")
+        else f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+    )
 
     return TrackPayload(
         trackId=f"youtube:{video_id}",
@@ -128,7 +133,7 @@ def map_track(payload: dict[str, Any]) -> TrackPayload | None:
         url=normalize_track_url(str(webpage_url)),
         playbackUrl=proxied_playback_url,
         durationMs=max(0, duration) * 1000,
-        artworkUrl=str(payload.get("thumbnail")) if payload.get("thumbnail") else None,
+        artworkUrl=artwork_url,
     )
 
 
