@@ -9,6 +9,7 @@ import { BotStatsService } from "../src/stats/bot-stats-service.js";
 class FakeAudioBackend extends AudioBackend {
   public readonly plays: Array<{ encodedTrack?: string; playbackIdentifier?: string }> = [];
   public readonly joins: JoinVoiceRequest[] = [];
+  public stopCalls = 0;
   public connected = false;
   public playbackPosition = 0;
 
@@ -83,6 +84,7 @@ class FakeAudioBackend extends AudioBackend {
   }
 
   async stop(guildId: string): Promise<void> {
+    this.stopCalls += 1;
     this.emit("trackEnd", guildId);
   }
 
@@ -182,6 +184,26 @@ describe("DefaultMusicService", () => {
     expect(queue.currentTrack).toBeNull();
     expect(queue.upcomingTracks).toHaveLength(0);
     expect(queue.isStopped).toBe(true);
+  });
+
+  it("returns to idle after the last track ends and clears the player", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio);
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+
+    audio.emit("trackEnd", "guild-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const queue = await service.getQueue("guild-1");
+    expect(queue.currentTrack).toBeNull();
+    expect(queue.upcomingTracks).toHaveLength(0);
+    expect(queue.isPlaying).toBe(false);
+    expect(queue.isStopped).toBe(true);
+    expect(audio.stopCalls).toBe(1);
   });
 
   it("disconnects while keeping the queue", async () => {

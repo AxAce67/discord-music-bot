@@ -472,6 +472,10 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       return;
     }
 
+    this.suppressedTrackEndGuilds.add(guildId);
+    await this.audioBackend.stop(guildId).catch((error) => {
+      this.logger.warn({ err: error, guildId }, "Failed to clear player after queue end");
+    });
     this.logger.info({ guildId }, "Queue finished, switching to idle control state");
     this.emit("queueEnded", guildId);
   }
