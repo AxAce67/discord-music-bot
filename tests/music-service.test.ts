@@ -9,6 +9,7 @@ import { BotStatsService } from "../src/stats/bot-stats-service.js";
 class FakeAudioBackend extends AudioBackend {
   public readonly plays: Array<{ encodedTrack?: string; playbackIdentifier?: string }> = [];
   public readonly joins: JoinVoiceRequest[] = [];
+  public readonly resolveCalls: string[] = [];
   public stopCalls = 0;
   public connected = false;
   public playbackPosition = 0;
@@ -28,6 +29,7 @@ class FakeAudioBackend extends AudioBackend {
 
   async resolve(query: string): Promise<ResolvedTrack[]> {
     const suffix = String(query);
+    this.resolveCalls.push(suffix);
     if (suffix.endsWith("/playlist-1")) {
       return [
         {
@@ -200,6 +202,27 @@ describe("DefaultMusicService", () => {
     expect(queue.upcomingTracks).toHaveLength(1);
     expect(queue.upcomingTracks[0]?.title).toBe("Playlist Track 2");
     expect(audio.plays).toHaveLength(1);
+  });
+
+  it("prefetches upcoming playlist tracks so skip can advance without another resolve", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio);
+
+    await service.enqueuePlaylist(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "https://www.youtube.com/playlist?list=abc", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-1"))).toHaveLength(1);
+    expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-2"))).toHaveLength(1);
+
+    await service.skip("guild-1");
+
+    const queue = await service.getQueue("guild-1");
+    expect(queue.currentTrack?.title).toBe("Playlist Track 2");
+    expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-2"))).toHaveLength(1);
   });
 
   it("advances to the next track on skip", async () => {

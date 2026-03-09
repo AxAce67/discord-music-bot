@@ -51,6 +51,8 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly suppressedTrackEndGuilds = new Set<string>();
   private readonly suppressedVoiceDisconnectGuilds = new Set<string>();
   private readonly trackFailureRecoveryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly playableTrackCache = new Map<string, { track: QueueTrack; expiresAt: number }>();
+  private readonly playableTrackInflight = new Map<string, Promise<QueueTrack>>();
   private readonly trackEndHandler = async (guildId: string) => {
     this.clearTrackFailureRecovery(guildId);
     if (this.suppressedTrackEndGuilds.delete(guildId)) {
@@ -173,6 +175,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       state.upcomingTracks.push(...queuedTracks);
       state.updatedAt = Date.now();
       await this.queueRepository.saveQueue(state);
+      this.prefetchQueueTracks(state);
       return queuedTracks;
     }
 
@@ -567,6 +570,9 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
     state.updatedAt = Date.now();
     await this.queueRepository.saveQueue(state);
+    if (state.currentTrack) {
+      this.prefetchQueueTracks(state);
+    }
     return queueTrack;
   }
 
@@ -601,6 +607,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
         await this.audioBackend.play(guildId, getPlaybackTarget(playableTrack));
         await this.botStatsService.recordTrackPlay(playableTrack.trackId);
         await this.queueRepository.saveQueue(state);
+        this.prefetchQueueTracks(state);
         return playableTrack;
       } catch (error) {
         if (!allowSkipOnFailure) {
@@ -627,23 +634,115 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
   private async ensurePlayableTrack(track: QueueTrack): Promise<QueueTrack> {
     if (track.encodedTrack || track.playbackIdentifier) {
+      this.cachePlayableTrack(track);
       return track;
     }
 
-    const resolved = await this.audioBackend.resolve(track.url);
-    const playableTrack = resolved[0];
-    if (!playableTrack) {
-      throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
+    return this.resolvePlayableTrack(track);
+  }
+
+  private async resolvePlayableTrack(track: QueueTrack): Promise<QueueTrack> {
+    const cached = this.getCachedPlayableTrack(track);
+    if (cached) {
+      return cached;
+    }
+
+    const cacheKey = track.url;
+    const inFlight = this.playableTrackInflight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const resolutionPromise = (async () => {
+      const resolved = await this.audioBackend.resolve(track.url);
+      const playableTrack = resolved[0];
+      if (!playableTrack) {
+        throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
+      }
+
+      const mergedTrack: QueueTrack = {
+        ...track,
+        trackId: playableTrack.trackId,
+        durationMs: playableTrack.durationMs || track.durationMs,
+        artworkUrl: playableTrack.artworkUrl ?? track.artworkUrl,
+        encodedTrack: playableTrack.encodedTrack,
+        playbackIdentifier: playableTrack.playbackIdentifier
+      };
+      this.cachePlayableTrack(mergedTrack);
+      return mergedTrack;
+    })();
+
+    this.playableTrackInflight.set(cacheKey, resolutionPromise);
+    try {
+      return await resolutionPromise;
+    } finally {
+      if (this.playableTrackInflight.get(cacheKey) === resolutionPromise) {
+        this.playableTrackInflight.delete(cacheKey);
+      }
+    }
+  }
+
+  private prefetchQueueTracks(state: GuildQueueState): void {
+    const candidates = state.upcomingTracks.slice(0, PLAYBACK_PREFETCH_COUNT);
+    for (const track of candidates) {
+      if (track.encodedTrack || track.playbackIdentifier || this.hasUsablePlayableTrack(track)) {
+        continue;
+      }
+
+      void this.resolvePlayableTrack(track).catch((error) => {
+        this.logger.debug({ err: error, trackTitle: track.title, trackUrl: track.url }, "Track prefetch failed");
+      });
+    }
+  }
+
+  private hasUsablePlayableTrack(track: QueueTrack): boolean {
+    if (this.playableTrackInflight.has(track.url)) {
+      return true;
+    }
+
+    const cached = this.playableTrackCache.get(track.url);
+    if (!cached) {
+      return false;
+    }
+
+    if (cached.expiresAt <= Date.now()) {
+      this.playableTrackCache.delete(track.url);
+      return false;
+    }
+
+    return true;
+  }
+
+  private getCachedPlayableTrack(track: QueueTrack): QueueTrack | null {
+    const cached = this.playableTrackCache.get(track.url);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt <= Date.now()) {
+      this.playableTrackCache.delete(track.url);
+      return null;
     }
 
     return {
       ...track,
-      trackId: playableTrack.trackId,
-      durationMs: playableTrack.durationMs || track.durationMs,
-      artworkUrl: playableTrack.artworkUrl ?? track.artworkUrl,
-      encodedTrack: playableTrack.encodedTrack,
-      playbackIdentifier: playableTrack.playbackIdentifier
+      trackId: cached.track.trackId,
+      durationMs: cached.track.durationMs || track.durationMs,
+      artworkUrl: cached.track.artworkUrl ?? track.artworkUrl,
+      encodedTrack: cached.track.encodedTrack,
+      playbackIdentifier: cached.track.playbackIdentifier
     };
+  }
+
+  private cachePlayableTrack(track: QueueTrack): void {
+    if (!track.encodedTrack && !track.playbackIdentifier) {
+      return;
+    }
+
+    this.playableTrackCache.set(track.url, {
+      track,
+      expiresAt: Date.now() + PLAYABLE_TRACK_CACHE_TTL_MS
+    });
   }
 }
 
@@ -677,3 +776,6 @@ function createQueueTrack(selectedTrack: ResolvedTrack, requestedBy: string): Qu
     playbackIdentifier: selectedTrack.playbackIdentifier
   };
 }
+
+const PLAYABLE_TRACK_CACHE_TTL_MS = 10 * 60 * 1000;
+const PLAYBACK_PREFETCH_COUNT = 3;
