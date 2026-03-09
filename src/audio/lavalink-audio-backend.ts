@@ -109,7 +109,16 @@ export class LavalinkAudioBackend extends AudioBackend {
         : normalizePlaybackUrl(query)
       : `ytsearch:${query}`;
     this.logger.info({ query, identifier }, "Resolving track");
-    const response = await node.rest.resolve(identifier);
+    let response;
+    try {
+      response = await node.rest.resolve(identifier);
+    } catch (error) {
+      if (isLavalinkConnectionError(error)) {
+        throw new MusicBotError("LAVALINK_UNAVAILABLE", "音声サーバーに接続できていません。", getErrorMessage(error));
+      }
+
+      throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。", getErrorMessage(error));
+    }
 
     if (!response) {
       throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
@@ -145,17 +154,25 @@ export class LavalinkAudioBackend extends AudioBackend {
   ): Promise<void> {
     const player = this.getPlayer(guildId);
     this.logger.info({ guildId }, "Starting track playback");
-    if (track.encodedTrack) {
-      await player.playTrack({ track: { encoded: track.encodedTrack } });
-      return;
-    }
+    try {
+      if (track.encodedTrack) {
+        await player.playTrack({ track: { encoded: track.encodedTrack } });
+        return;
+      }
 
-    if (track.playbackIdentifier) {
-      await player.playTrack({ track: { identifier: track.playbackIdentifier } });
-      return;
-    }
+      if (track.playbackIdentifier) {
+        await player.playTrack({ track: { identifier: track.playbackIdentifier } });
+        return;
+      }
 
-    throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
+      throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。");
+    } catch (error) {
+      if (error instanceof MusicBotError) {
+        throw error;
+      }
+
+      throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました。", getErrorMessage(error));
+    }
   }
 
   getPlaybackPosition(guildId: string): number {
@@ -293,8 +310,7 @@ function normalizePlaybackUrl(value: string): string {
 }
 
 function isLavalinkConnectionError(error: unknown): boolean {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+  const message = getErrorMessage(error);
 
   return (
     message.includes("Can't find any nodes to connect on") ||
@@ -302,4 +318,8 @@ function isLavalinkConnectionError(error: unknown): boolean {
     message.includes("Websocket closed before a connection was established") ||
     message.includes("socket hang up")
   );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
 }
