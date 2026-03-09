@@ -95,8 +95,20 @@ async def try_open_upstream_stream(source, request: Request) -> Response | None:
         await client.aclose()
         return Response(status_code=upstream.status_code, headers=response_headers)
 
+    byte_iterator = upstream.aiter_raw(chunk_size=65536)
+    try:
+        first_chunk = await asyncio.wait_for(anext(byte_iterator), timeout=5)
+    except StopAsyncIteration:
+        await upstream.aclose()
+        await client.aclose()
+        return Response(status_code=upstream.status_code, headers=response_headers)
+    except Exception:
+        await upstream.aclose()
+        await client.aclose()
+        return None
+
     return StreamingResponse(
-        upstream.aiter_bytes(),
+        chain_stream_chunks(first_chunk, byte_iterator),
         status_code=upstream.status_code,
         headers=response_headers,
         background=BackgroundTask(close_upstream_stream, upstream, client),
@@ -127,6 +139,14 @@ async def stream_via_yt_dlp(source_url: str, request: Request) -> Response:
 async def close_upstream_stream(response: httpx.Response, client: httpx.AsyncClient) -> None:
     await response.aclose()
     await client.aclose()
+
+
+async def chain_stream_chunks(first_chunk: bytes, iterator):
+    if first_chunk:
+        yield first_chunk
+
+    async for chunk in iterator:
+        yield chunk
 
 
 async def iter_process_stdout(process: asyncio.subprocess.Process):
