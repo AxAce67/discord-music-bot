@@ -63,6 +63,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly playlistLoadState = new Map<string, { generation: number; insertIndex: number }>();
   private readonly playlistLoadGeneration = new Map<string, number>();
   private readonly guildOperations = new Map<string, Promise<void>>();
+  private readonly trackFailureAttempts = new Map<string, { trackId: string; attempts: number }>();
   private readonly trackEndHandler = async (guildId: string) => {
     try {
       await this.runGuildOperation(guildId, async () => {
@@ -506,6 +507,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   private async advanceQueue(guildId: string): Promise<void> {
     const state = await this.getQueue(guildId);
     if (!state.currentTrack) {
+      this.clearTrackFailureAttempt(guildId);
       return;
     }
 
@@ -548,6 +550,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       this.logger.warn({ err: error, guildId }, "Failed to clear player after queue end");
     });
     this.logger.info({ guildId }, "Queue finished, switching to idle control state");
+    this.clearTrackFailureAttempt(guildId);
     this.emit("queueEnded", guildId);
   }
 
@@ -591,6 +594,20 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     await this.audioBackend.stop(guildId).catch((error) => {
       this.logger.warn({ err: error, guildId }, "Failed to stop failed track during recovery");
     });
+
+    if (this.prepareTrackPlaybackRetry(guildId, state, state.currentTrack)) {
+      await this.queueRepository.saveQueue(state);
+      try {
+        const restartedTrack = await this.startPlaybackFromCurrent(guildId, state, false);
+        if (restartedTrack) {
+          return;
+        }
+      } catch (error) {
+        this.logger.warn({ err: error, guildId, trackTitle: state.currentTrack?.title }, "Track retry failed after recovery");
+      }
+    }
+
+    this.clearTrackFailureAttempt(guildId);
     await this.advanceQueue(guildId);
   }
 
@@ -626,6 +643,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
   private async normalizeDisconnectedState(state: GuildQueueState): Promise<GuildQueueState> {
     this.cancelPlaylistLoads(state.guildId);
+    this.clearTrackFailureAttempt(state.guildId);
     if (state.currentTrack) {
       state.upcomingTracks.unshift(state.currentTrack);
       state.currentTrack = null;
@@ -703,9 +721,16 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
         await this.audioBackend.play(guildId, getPlaybackTarget(playableTrack));
         await this.botStatsService.recordTrackPlay(playableTrack.trackId);
         await this.queueRepository.saveQueue(state);
+        if (this.trackFailureAttempts.get(guildId)?.trackId !== playableTrack.trackId) {
+          this.clearTrackFailureAttempt(guildId);
+        }
         this.prefetchQueueTracks(state);
         return playableTrack;
       } catch (error) {
+        if (allowSkipOnFailure && this.prepareTrackPlaybackRetry(guildId, state, requestedTrack)) {
+          continue;
+        }
+
         if (!allowSkipOnFailure) {
           throw error instanceof MusicBotError
             ? error
@@ -716,10 +741,12 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
           { err: error, guildId, trackTitle: requestedTrack.title },
           "Skipping unplayable track before playback"
         );
+        this.clearTrackFailureAttempt(guildId);
         state.currentTrack = state.upcomingTracks.shift() ?? null;
       }
     }
 
+    this.clearTrackFailureAttempt(guildId);
     state.isPlaying = false;
     state.isPaused = false;
     state.isStopped = true;
@@ -839,6 +866,46 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       track,
       expiresAt: Date.now() + PLAYABLE_TRACK_CACHE_TTL_MS
     });
+  }
+
+  private prepareTrackPlaybackRetry(guildId: string, state: GuildQueueState, track: QueueTrack): boolean {
+    const existing = this.trackFailureAttempts.get(guildId);
+    const attempts = existing?.trackId === track.trackId ? existing.attempts : 0;
+    if (attempts >= TRACK_FAILURE_RETRY_LIMIT) {
+      return false;
+    }
+
+    this.trackFailureAttempts.set(guildId, { trackId: track.trackId, attempts: attempts + 1 });
+    this.invalidatePlayableTrack(track);
+    state.currentTrack = {
+      ...track,
+      encodedTrack: undefined,
+      playbackIdentifier: undefined
+    };
+    state.updatedAt = Date.now();
+    this.logger.warn(
+      { guildId, trackTitle: track.title, attempt: attempts + 1 },
+      "Retrying failed track playback with a fresh resolve"
+    );
+    return true;
+  }
+
+  private clearTrackFailureAttempt(guildId: string, trackId?: string): void {
+    const existing = this.trackFailureAttempts.get(guildId);
+    if (!existing) {
+      return;
+    }
+
+    if (trackId && existing.trackId !== trackId) {
+      return;
+    }
+
+    this.trackFailureAttempts.delete(guildId);
+  }
+
+  private invalidatePlayableTrack(track: QueueTrack): void {
+    this.playableTrackCache.delete(track.url);
+    this.playableTrackInflight.delete(track.url);
   }
 
   private async resolveQuery(query: string): Promise<ResolvedTrack[]> {
@@ -1049,6 +1116,7 @@ const PLAYBACK_PREFETCH_COUNT = 3;
 const PLAYLIST_INITIAL_BATCH_SIZE = 25;
 const PLAYLIST_BACKGROUND_BATCH_SIZE = 50;
 const RESOLVED_QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
+const TRACK_FAILURE_RETRY_LIMIT = 1;
 
 function cloneResolvedTracks(tracks: ResolvedTrack[]): ResolvedTrack[] {
   return tracks.map((track) => ({ ...track }));

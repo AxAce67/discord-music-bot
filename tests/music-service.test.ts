@@ -180,6 +180,23 @@ class ConcurrentSaveDetectingQueueRepository extends InMemoryQueueRepository {
   }
 }
 
+class FlakyPlayAudioBackend extends FakeAudioBackend {
+  private failedTrackIds = new Set<string>();
+
+  override async play(
+    guildId: string,
+    track: { encodedTrack?: string; playbackIdentifier?: string }
+  ): Promise<void> {
+    const trackId = track.encodedTrack ?? track.playbackIdentifier ?? "unknown";
+    if (!this.failedTrackIds.has(trackId)) {
+      this.failedTrackIds.add(trackId);
+      throw new Error("transient play failure");
+    }
+
+    await super.play(guildId, track);
+  }
+}
+
 describe("DefaultMusicService", () => {
   function createService(audio: FakeAudioBackend, queueRepository: QueueRepository = new InMemoryQueueRepository()) {
     return new DefaultMusicService(
@@ -279,6 +296,20 @@ describe("DefaultMusicService", () => {
     const queue = await service.getQueue("guild-1");
     expect(queue.currentTrack?.title).toBe("Playlist Track 2");
     expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-2"))).toHaveLength(1);
+  });
+
+  it("retries the same track once before skipping when playback start fails", async () => {
+    const audio = new FlakyPlayAudioBackend();
+    const service = createService(audio);
+
+    await service.enqueuePlaylist(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "https://www.youtube.com/playlist?list=abc", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+
+    const queue = await service.getQueue("guild-1");
+    expect(queue.currentTrack?.title).toBe("Playlist Track 1");
+    expect(audio.plays).toHaveLength(1);
   });
 
   it("advances to the next track on skip", async () => {
@@ -451,27 +482,21 @@ describe("DefaultMusicService", () => {
     expect(queue.currentTrack?.title).toBe("Test Track song-2");
   });
 
-  it("recovers to the next track after a track exception", async () => {
+  it("retries the current track once after a track exception before advancing", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudioBackend();
     const service = createService(audio);
 
-    await service.enqueue(
+    await service.enqueuePlaylist(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
-      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
-    );
-    await service.enqueue(
-      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
-      { query: "song-2", requestedBy: "user-2", requestedAt: Date.now() }
+      { query: "https://www.youtube.com/playlist?list=abc", requestedBy: "user-1", requestedAt: Date.now() }
     );
 
     audio.emit("trackException", "guild-1");
     await vi.advanceTimersByTimeAsync(1600);
 
     const queue = await service.getQueue("guild-1");
-    expect(queue.currentTrack?.title).toBe("Test Track song-2");
-    expect(queue.upcomingTracks).toHaveLength(0);
-    expect(queue.repeatMode).toBe("off");
+    expect(queue.currentTrack?.title).toBe("Playlist Track 1");
 
     vi.useRealTimers();
   });
