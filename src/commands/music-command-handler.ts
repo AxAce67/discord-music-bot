@@ -152,7 +152,7 @@ export class MusicCommandHandler {
         requestedAt: Date.now()
       }
     );
-    await this.uiService.recreateControlMessageInChannel(context.guildId, context.textChannel);
+    this.queueControlMessageSync(context, true);
     await this.sendPlayConfirmation(context, track.title, track.url, queueBeforeEnqueue.currentTrack === null);
   }
 
@@ -183,7 +183,7 @@ export class MusicCommandHandler {
       }
     );
 
-    await this.uiService.recreateControlMessageInChannel(context.guildId, context.textChannel);
+    this.queueControlMessageSync(context, true);
     await this.sendPlaylistConfirmation(context, tracks.length, queueBeforeEnqueue.currentTrack === null);
   }
 
@@ -338,6 +338,10 @@ export class MusicCommandHandler {
     }
 
     await this.uiService.refreshControlMessage(context.guildId);
+  }
+
+  private queueControlMessageSync(context: CommandContext, moveToBottom = false): void {
+    void this.syncControlMessage(context, moveToBottom).catch(() => undefined);
   }
 
   private async sendPlaylistConfirmation(

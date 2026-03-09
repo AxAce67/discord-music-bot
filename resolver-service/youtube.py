@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import logging
 import os
 import subprocess
-from typing import Any
+import time
+from typing import Any, TypeVar
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from errors import ResolverError
@@ -16,6 +18,10 @@ logger = logging.getLogger("resolver.youtube")
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
 DEFAULT_YTDLP_TIMEOUT_SECONDS = 30
+DEFAULT_RESOLVER_CACHE_TTL_SECONDS = 300
+_track_payload_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_playlist_entries_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+CacheValue = TypeVar("CacheValue")
 
 
 def search_tracks(query: str, limit: int = DEFAULT_LIMIT) -> list[TrackPayload]:
@@ -31,7 +37,12 @@ def resolve_track(url: str) -> list[TrackPayload]:
     if is_playlist_url(url) and not has_video_id(url):
         raise ResolverError("BAD_REQUEST", "Playlist URLs are not accepted on this endpoint", 400)
 
-    payload = run_yt_dlp(normalize_track_url(url))
+    normalized_url = normalize_track_url(url)
+    payload = get_cached_payload(_track_payload_cache, normalized_url)
+    if payload is None:
+        payload = run_yt_dlp(normalized_url)
+        set_cached_payload(_track_payload_cache, normalized_url, payload)
+
     track = map_track(payload)
     if not track:
         raise ResolverError("TRACK_NOT_FOUND", "No playable track found", 404)
@@ -43,10 +54,27 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
     if not is_playlist_url(url):
         raise ResolverError("BAD_REQUEST", "A playlist URL is required", 400)
 
-    payload = run_yt_dlp(normalize_playlist_url(url), flat_playlist=True)
-    entries = map_entries(payload.get("entries", []), MAX_PLAYLIST_TRACKS)
+    normalized_url = normalize_playlist_url(url)
+    raw_entries = get_cached_payload(_playlist_entries_cache, normalized_url)
+    if raw_entries is None:
+        payload = run_yt_dlp(normalized_url, flat_playlist=True)
+        raw_entries = payload.get("entries", [])
+        set_cached_payload(_playlist_entries_cache, normalized_url, raw_entries)
+
+    entries = map_entries(raw_entries, MAX_PLAYLIST_TRACKS)
     if not entries:
         raise ResolverError("PLAYLIST_NOT_FOUND", "No playable playlist entries found", 404)
+
+    first_track = entries[0]
+    if first_track and not first_track.playbackUrl:
+        try:
+            entries[0] = resolve_track(first_track.url)[0]
+        except ResolverError as error:
+            logger.info(
+                "Could not enrich first playlist track %s for fast start: %s",
+                first_track.url,
+                error.code,
+            )
 
     return entries
 
@@ -302,6 +330,32 @@ def get_yt_dlp_timeout_seconds() -> int:
     return parsed
 
 
+def get_resolver_cache_ttl_seconds() -> int:
+    raw_value = os.getenv("RESOLVER_CACHE_TTL_SECONDS")
+    if raw_value is None or raw_value.strip() == "":
+        return DEFAULT_RESOLVER_CACHE_TTL_SECONDS
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid RESOLVER_CACHE_TTL_SECONDS=%r, falling back to %s seconds",
+            raw_value,
+            DEFAULT_RESOLVER_CACHE_TTL_SECONDS,
+        )
+        return DEFAULT_RESOLVER_CACHE_TTL_SECONDS
+
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive RESOLVER_CACHE_TTL_SECONDS=%r, falling back to %s seconds",
+            raw_value,
+            DEFAULT_RESOLVER_CACHE_TTL_SECONDS,
+        )
+        return DEFAULT_RESOLVER_CACHE_TTL_SECONDS
+
+    return parsed
+
+
 def split_env_list(value: str) -> list[str]:
     normalized = value.replace("||", "\n")
     return [line.strip() for line in normalized.splitlines() if line.strip()]
@@ -330,3 +384,30 @@ def is_direct_media_url(url: str) -> bool:
         return False
 
     return True
+
+
+def get_cached_payload(cache: dict[str, tuple[float, CacheValue]], key: str) -> CacheValue | None:
+    cleanup_expired_cache_entries(cache)
+    cached = cache.get(key)
+    if not cached:
+        return None
+
+    _, payload = cached
+    return deepcopy(payload)
+
+
+def set_cached_payload(cache: dict[str, tuple[float, CacheValue]], key: str, payload: CacheValue) -> None:
+    cleanup_expired_cache_entries(cache)
+    cache[key] = (time.time() + get_resolver_cache_ttl_seconds(), deepcopy(payload))
+
+
+def cleanup_expired_cache_entries(cache: dict[str, tuple[float, CacheValue]]) -> None:
+    now = time.time()
+    expired_keys = [key for key, (expires_at, _) in cache.items() if expires_at <= now]
+    for key in expired_keys:
+        cache.pop(key, None)
+
+
+def clear_resolver_caches() -> None:
+    _track_payload_cache.clear()
+    _playlist_entries_cache.clear()

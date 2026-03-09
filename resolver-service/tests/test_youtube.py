@@ -7,7 +7,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from youtube import extract_playback_source, get_yt_dlp_timeout_seconds, map_track, normalize_playlist_url
+from youtube import (
+    clear_resolver_caches,
+    extract_playback_source,
+    get_yt_dlp_timeout_seconds,
+    map_track,
+    normalize_playlist_url,
+    resolve_playlist,
+    resolve_track,
+)
 
 
 class NormalizePlaylistUrlTest(unittest.TestCase):
@@ -37,6 +45,9 @@ class YtDlpTimeoutTest(unittest.TestCase):
 
 
 class PlaylistEntryMappingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        clear_resolver_caches()
+
     def test_maps_flat_playlist_entries_to_watch_urls(self) -> None:
         track = map_track({"id": "abc123", "title": "Flat Entry"})
         self.assertIsNotNone(track)
@@ -51,6 +62,43 @@ class PlaylistEntryMappingTest(unittest.TestCase):
         )
         self.assertIsNone(playback_url)
         self.assertEqual(headers, {})
+
+    @patch("youtube.register_playback_source", return_value="http://resolver/v1/stream/token-1")
+    @patch("youtube.run_yt_dlp")
+    def test_resolve_playlist_enriches_first_track_for_faster_start(self, run_yt_dlp, _register_playback_source) -> None:
+        run_yt_dlp.side_effect = [
+            {
+                "entries": [
+                    {"id": "abc123", "title": "Flat Entry 1"},
+                    {"id": "def456", "title": "Flat Entry 2"},
+                ]
+            },
+            {
+                "id": "abc123",
+                "title": "Detailed Entry 1",
+                "duration": 123,
+                "requested_downloads": [{"url": "https://cdn.example.com/audio.webm"}],
+            },
+        ]
+
+        tracks = resolve_playlist("https://www.youtube.com/playlist?list=PL12345")
+
+        self.assertEqual(len(tracks), 2)
+        self.assertEqual(tracks[0].title, "Detailed Entry 1")
+        self.assertEqual(tracks[0].playbackUrl, "http://resolver/v1/stream/token-1")
+        self.assertIsNone(tracks[1].playbackUrl)
+        self.assertEqual(run_yt_dlp.call_count, 2)
+
+    @patch("youtube.run_yt_dlp")
+    def test_resolve_track_uses_short_term_cache(self, run_yt_dlp) -> None:
+        run_yt_dlp.return_value = {"id": "abc123", "title": "Cached Track", "duration": 120}
+
+        first = resolve_track("https://www.youtube.com/watch?v=abc123")
+        second = resolve_track("https://www.youtube.com/watch?v=abc123&list=PL12345")
+
+        self.assertEqual(first[0].title, "Cached Track")
+        self.assertEqual(second[0].title, "Cached Track")
+        self.assertEqual(run_yt_dlp.call_count, 1)
 
 
 if __name__ == "__main__":
