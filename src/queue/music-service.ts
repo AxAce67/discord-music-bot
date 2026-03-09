@@ -62,15 +62,18 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly playableTrackInflight = new Map<string, Promise<QueueTrack>>();
   private readonly playlistLoadState = new Map<string, { generation: number; insertIndex: number }>();
   private readonly playlistLoadGeneration = new Map<string, number>();
+  private readonly guildOperations = new Map<string, Promise<void>>();
   private readonly trackEndHandler = async (guildId: string) => {
-    this.clearTrackFailureRecovery(guildId);
-    if (this.suppressedTrackEndGuilds.delete(guildId)) {
-      this.logger.info({ guildId }, "Ignoring track end triggered by manual stop");
-      return;
-    }
-
     try {
-      await this.advanceQueue(guildId);
+      await this.runGuildOperation(guildId, async () => {
+        this.clearTrackFailureRecovery(guildId);
+        if (this.suppressedTrackEndGuilds.delete(guildId)) {
+          this.logger.info({ guildId }, "Ignoring track end triggered by manual stop");
+          return;
+        }
+
+        await this.advanceQueue(guildId);
+      });
     } catch (error) {
       this.logger.error({ err: error, guildId }, "Failed to advance queue");
     }
@@ -86,18 +89,20 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     this.audioBackend.on("trackEnd", this.trackEndHandler);
     this.audioBackend.on("trackException", async (guildId: string) => {
       try {
-        await this.scheduleTrackFailureRecovery(guildId);
+        await this.runGuildOperation(guildId, () => this.scheduleTrackFailureRecovery(guildId));
       } catch (error) {
         this.logger.error({ err: error, guildId }, "Failed to schedule track failure recovery");
       }
     });
     this.audioBackend.on("voiceDisconnected", async (guildId: string) => {
       try {
-        if (this.suppressedVoiceDisconnectGuilds.delete(guildId)) {
-          this.logger.info({ guildId }, "Ignoring voice disconnect triggered by manual leave");
-          return;
-        }
-        await this.handleVoiceDisconnected(guildId);
+        await this.runGuildOperation(guildId, async () => {
+          if (this.suppressedVoiceDisconnectGuilds.delete(guildId)) {
+            this.logger.info({ guildId }, "Ignoring voice disconnect triggered by manual leave");
+            return;
+          }
+          await this.handleVoiceDisconnected(guildId);
+        });
       } catch (error) {
         this.logger.error({ err: error, guildId }, "Failed to normalize queue after voice disconnect");
       }
@@ -105,124 +110,130 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   }
 
   async join(context: JoinContext): Promise<void> {
-    this.logger.info(
-      {
+    await this.runGuildOperation(context.guildId, async () => {
+      this.logger.info(
+        {
+          guildId: context.guildId,
+          voiceChannelId: context.voiceChannelId,
+          textChannelId: context.textChannelId
+        },
+        "Joining voice channel"
+      );
+      const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
+      state.voiceChannelId = context.voiceChannelId;
+      state.textChannelId = context.textChannelId;
+      state.updatedAt = Date.now();
+
+      await this.audioBackend.join({
         guildId: context.guildId,
         voiceChannelId: context.voiceChannelId,
-        textChannelId: context.textChannelId
-      },
-      "Joining voice channel"
-    );
-    const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
-    state.voiceChannelId = context.voiceChannelId;
-    state.textChannelId = context.textChannelId;
-    state.updatedAt = Date.now();
+        textChannelId: context.textChannelId,
+        shardId: context.shardId
+      });
 
-    await this.audioBackend.join({
-      guildId: context.guildId,
-      voiceChannelId: context.voiceChannelId,
-      textChannelId: context.textChannelId,
-      shardId: context.shardId
+      await this.queueRepository.saveQueue(state);
     });
-
-    await this.queueRepository.saveQueue(state);
   }
 
   async enqueue(context: JoinContext, request: TrackRequest): Promise<QueueTrack> {
-    this.logger.info(
-      {
-        guildId: context.guildId,
-        voiceChannelId: context.voiceChannelId,
-        query: request.query,
-        requestedBy: request.requestedBy
-      },
-      "Queueing track request"
-    );
-    const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
-    state.voiceChannelId = context.voiceChannelId;
-    state.textChannelId = context.textChannelId;
+    return this.runGuildOperation(context.guildId, async () => {
+      this.logger.info(
+        {
+          guildId: context.guildId,
+          voiceChannelId: context.voiceChannelId,
+          query: request.query,
+          requestedBy: request.requestedBy
+        },
+        "Queueing track request"
+      );
+      const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
+      state.voiceChannelId = context.voiceChannelId;
+      state.textChannelId = context.textChannelId;
 
-    const joinPromise = this.startJoinIfNeeded(context, "No active Lavalink connection, joining before playback");
-    const resolved = await this.resolveQuery(request.query);
-    await joinPromise;
-    const selectedTrack = resolved[0];
+      const joinPromise = this.startJoinIfNeeded(context, "No active Lavalink connection, joining before playback");
+      const resolved = await this.resolveQuery(request.query);
+      await joinPromise;
+      const selectedTrack = resolved[0];
 
-    if (!selectedTrack) {
-      throw new MusicBotError("TRACK_NOT_FOUND", "該当する曲が見つかりませんでした。");
-    }
+      if (!selectedTrack) {
+        throw new MusicBotError("TRACK_NOT_FOUND", "該当する曲が見つかりませんでした。");
+      }
 
-    return this.enqueueResolved(context, state, selectedTrack, request.requestedBy);
+      return this.enqueueResolved(context, state, selectedTrack, request.requestedBy);
+    });
   }
 
   async enqueuePlaylist(context: JoinContext, request: TrackRequest): Promise<PlaylistEnqueueResult> {
-    this.logger.info(
-      {
-        guildId: context.guildId,
-        voiceChannelId: context.voiceChannelId,
-        query: request.query,
-        requestedBy: request.requestedBy
-      },
-      "Queueing playlist request"
-    );
-    const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
-    state.voiceChannelId = context.voiceChannelId;
-    state.textChannelId = context.textChannelId;
-
-    const joinPromise = this.startJoinIfNeeded(
-      context,
-      "No active Lavalink connection, joining before playlist playback"
-    );
-    const startedImmediately = state.currentTrack === null;
-    const initialPlaylist = startedImmediately
-      ? await this.audioBackend.resolvePlaylist(request.query, { offset: 0, limit: PLAYLIST_INITIAL_BATCH_SIZE })
-      : null;
-    const resolved = initialPlaylist ?? (await this.resolveEntirePlaylist(request.query));
-    await joinPromise;
-    if (resolved.tracks.length === 0) {
-      throw new MusicBotError("TRACK_NOT_FOUND", "プレイリストの曲が見つかりませんでした。");
-    }
-
-    const queuedTracks = resolved.tracks.map((track) => createQueueTrack(track, request.requestedBy));
-    if (!startedImmediately) {
-      state.upcomingTracks.push(...queuedTracks);
-      state.updatedAt = Date.now();
-      await this.queueRepository.saveQueue(state);
-      this.prefetchQueueTracks(state);
-      return { tracks: queuedTracks, totalCount: resolved.totalCount };
-    }
-
-    const [firstTrack, ...upcomingTracks] = queuedTracks;
-    if (!firstTrack) {
-      throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした。");
-    }
-
-    state.currentTrack = firstTrack;
-    state.upcomingTracks.push(...upcomingTracks);
-    state.isPlaying = true;
-    state.isPaused = false;
-    state.isStopped = false;
-    state.updatedAt = Date.now();
-
-    this.logger.info({ guildId: context.guildId, trackTitle: firstTrack.title }, "Playing track immediately");
-    const startedTrack = await this.startPlaybackFromCurrent(context.guildId, state, true);
-    if (!startedTrack) {
-      throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした。");
-    }
-
-    if (initialPlaylist?.nextOffset !== undefined) {
-      const generation = this.beginPlaylistLoad(context.guildId, state.upcomingTracks.length);
-      this.loadRemainingPlaylistTracks(
-        context.guildId,
-        request.query,
-        request.requestedBy,
-        initialPlaylist.nextOffset,
-        generation
+    return this.runGuildOperation(context.guildId, async () => {
+      this.logger.info(
+        {
+          guildId: context.guildId,
+          voiceChannelId: context.voiceChannelId,
+          query: request.query,
+          requestedBy: request.requestedBy
+        },
+        "Queueing playlist request"
       );
-    } else {
-      this.clearPlaylistLoad(context.guildId);
-    }
+      const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
+      state.voiceChannelId = context.voiceChannelId;
+      state.textChannelId = context.textChannelId;
 
-    return { tracks: [startedTrack, ...state.upcomingTracks], totalCount: resolved.totalCount };
+      const joinPromise = this.startJoinIfNeeded(
+        context,
+        "No active Lavalink connection, joining before playlist playback"
+      );
+      const startedImmediately = state.currentTrack === null;
+      const initialPlaylist = startedImmediately
+        ? await this.audioBackend.resolvePlaylist(request.query, { offset: 0, limit: PLAYLIST_INITIAL_BATCH_SIZE })
+        : null;
+      const resolved = initialPlaylist ?? (await this.resolveEntirePlaylist(request.query));
+      await joinPromise;
+      if (resolved.tracks.length === 0) {
+        throw new MusicBotError("TRACK_NOT_FOUND", "プレイリストの曲が見つかりませんでした。");
+      }
+
+      const queuedTracks = resolved.tracks.map((track) => createQueueTrack(track, request.requestedBy));
+      if (!startedImmediately) {
+        state.upcomingTracks.push(...queuedTracks);
+        state.updatedAt = Date.now();
+        await this.queueRepository.saveQueue(state);
+        this.prefetchQueueTracks(state);
+        return { tracks: queuedTracks, totalCount: resolved.totalCount };
+      }
+
+      const [firstTrack, ...upcomingTracks] = queuedTracks;
+      if (!firstTrack) {
+        throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした。");
+      }
+
+      state.currentTrack = firstTrack;
+      state.upcomingTracks.push(...upcomingTracks);
+      state.isPlaying = true;
+      state.isPaused = false;
+      state.isStopped = false;
+      state.updatedAt = Date.now();
+
+      this.logger.info({ guildId: context.guildId, trackTitle: firstTrack.title }, "Playing track immediately");
+      const startedTrack = await this.startPlaybackFromCurrent(context.guildId, state, true);
+      if (!startedTrack) {
+        throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした。");
+      }
+
+      if (initialPlaylist?.nextOffset !== undefined) {
+        const generation = this.beginPlaylistLoad(context.guildId, state.upcomingTracks.length);
+        this.loadRemainingPlaylistTracks(
+          context.guildId,
+          request.query,
+          request.requestedBy,
+          initialPlaylist.nextOffset,
+          generation
+        );
+      } else {
+        this.clearPlaylistLoad(context.guildId);
+      }
+
+      return { tracks: [startedTrack, ...state.upcomingTracks], totalCount: resolved.totalCount };
+    });
   }
 
   async search(query: string): Promise<ResolvedTrack[]> {
@@ -230,149 +241,167 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   }
 
   async enqueueResolvedTrack(context: JoinContext, track: ResolvedTrack, requestedBy: string): Promise<QueueTrack> {
-    const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
-    state.voiceChannelId = context.voiceChannelId;
-    state.textChannelId = context.textChannelId;
+    return this.runGuildOperation(context.guildId, async () => {
+      const state = await loadOrCreateQueueState(this.queueRepository, context.guildId);
+      state.voiceChannelId = context.voiceChannelId;
+      state.textChannelId = context.textChannelId;
 
-    await this.startJoinIfNeeded(context, "No active Lavalink connection, joining before playback");
+      await this.startJoinIfNeeded(context, "No active Lavalink connection, joining before playback");
 
-    return this.enqueueResolved(context, state, track, requestedBy);
+      return this.enqueueResolved(context, state, track, requestedBy);
+    });
   }
 
   async skip(guildId: string): Promise<QueueTrack | null> {
-    this.logger.info({ guildId }, "Skipping current track");
-    const state = await this.getQueue(guildId);
-    if (!state.currentTrack) {
-      throw new MusicBotError("QUEUE_EMPTY", "現在再生中の曲はありません。");
-    }
+    return this.runGuildOperation(guildId, async () => {
+      this.logger.info({ guildId }, "Skipping current track");
+      const state = await this.getQueue(guildId);
+      if (!state.currentTrack) {
+        throw new MusicBotError("QUEUE_EMPTY", "現在再生中の曲はありません。");
+      }
 
-    const upcoming = state.upcomingTracks[0] ?? null;
-    state.repeatMode = "off";
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
-    this.suppressedTrackEndGuilds.add(guildId);
-    await this.audioBackend.stop(guildId);
-    await this.advanceQueue(guildId);
-    return upcoming;
+      const upcoming = state.upcomingTracks[0] ?? null;
+      state.repeatMode = "off";
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      this.suppressedTrackEndGuilds.add(guildId);
+      await this.audioBackend.stop(guildId);
+      await this.advanceQueue(guildId);
+      return upcoming;
+    });
   }
 
   async togglePause(guildId: string): Promise<GuildQueueState> {
-    const state = await this.getQueue(guildId);
-    if (!state.currentTrack) {
-      throw new MusicBotError("QUEUE_EMPTY", "現在再生中の曲はありません。");
-    }
+    return this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      if (!state.currentTrack) {
+        throw new MusicBotError("QUEUE_EMPTY", "現在再生中の曲はありません。");
+      }
 
-    if (state.isPaused) {
-      await this.audioBackend.resume(guildId);
-      state.isPaused = false;
-      state.isPlaying = true;
-    } else {
-      await this.audioBackend.pause(guildId);
-      state.isPaused = true;
-      state.isPlaying = false;
-    }
+      if (state.isPaused) {
+        await this.audioBackend.resume(guildId);
+        state.isPaused = false;
+        state.isPlaying = true;
+      } else {
+        await this.audioBackend.pause(guildId);
+        state.isPaused = true;
+        state.isPlaying = false;
+      }
 
-    state.isStopped = false;
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
-    return state;
+      state.isStopped = false;
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      return state;
+    });
   }
 
   async resumeFromQueue(context: JoinContext): Promise<GuildQueueState> {
-    const state = await this.getQueue(context.guildId);
-    if (state.currentTrack) {
+    return this.runGuildOperation(context.guildId, async () => {
+      const state = await this.getQueue(context.guildId);
+      if (state.currentTrack) {
+        return state;
+      }
+
+      const nextTrack = state.upcomingTracks.shift() ?? null;
+      if (!nextTrack) {
+        throw new MusicBotError("QUEUE_EMPTY", "再開できる曲がありません。");
+      }
+      this.consumePlaylistInsertSlot(context.guildId);
+
+      state.voiceChannelId = context.voiceChannelId;
+      state.textChannelId = context.textChannelId;
+      state.currentTrack = nextTrack;
+      state.isPlaying = true;
+      state.isPaused = false;
+      state.isStopped = false;
+      state.updatedAt = Date.now();
+
+      if (!this.audioBackend.hasConnection(context.guildId)) {
+        await this.audioBackend.join({
+          guildId: context.guildId,
+          voiceChannelId: context.voiceChannelId,
+          textChannelId: context.textChannelId,
+          shardId: context.shardId
+        });
+      }
+
+      const startedTrack = await this.startPlaybackFromCurrent(context.guildId, state, true);
+      if (!startedTrack) {
+        throw new MusicBotError("QUEUE_EMPTY", "再開できる曲がありません。");
+      }
       return state;
-    }
-
-    const nextTrack = state.upcomingTracks.shift() ?? null;
-    if (!nextTrack) {
-      throw new MusicBotError("QUEUE_EMPTY", "再開できる曲がありません。");
-    }
-    this.consumePlaylistInsertSlot(context.guildId);
-
-    state.voiceChannelId = context.voiceChannelId;
-    state.textChannelId = context.textChannelId;
-    state.currentTrack = nextTrack;
-    state.isPlaying = true;
-    state.isPaused = false;
-    state.isStopped = false;
-    state.updatedAt = Date.now();
-
-    if (!this.audioBackend.hasConnection(context.guildId)) {
-      await this.audioBackend.join({
-        guildId: context.guildId,
-        voiceChannelId: context.voiceChannelId,
-        textChannelId: context.textChannelId,
-        shardId: context.shardId
-      });
-    }
-
-    const startedTrack = await this.startPlaybackFromCurrent(context.guildId, state, true);
-    if (!startedTrack) {
-      throw new MusicBotError("QUEUE_EMPTY", "再開できる曲がありません。");
-    }
-    return state;
+    });
   }
 
   async stop(guildId: string): Promise<void> {
-    this.logger.info({ guildId }, "Stopping playback and clearing queue");
-    this.cancelPlaylistLoads(guildId);
-    this.clearTrackFailureRecovery(guildId);
-    const state = await this.getQueue(guildId);
-    if (state.currentTrack) {
-      this.suppressedTrackEndGuilds.add(guildId);
-      await this.audioBackend.stop(guildId);
-    }
+    await this.runGuildOperation(guildId, async () => {
+      this.logger.info({ guildId }, "Stopping playback and clearing queue");
+      this.cancelPlaylistLoads(guildId);
+      this.clearTrackFailureRecovery(guildId);
+      const state = await this.getQueue(guildId);
+      if (state.currentTrack) {
+        this.suppressedTrackEndGuilds.add(guildId);
+        await this.audioBackend.stop(guildId);
+      }
 
-    state.currentTrack = null;
-    state.upcomingTracks = [];
-    state.isPlaying = false;
-    state.isPaused = false;
-    state.isStopped = true;
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
+      state.currentTrack = null;
+      state.upcomingTracks = [];
+      state.isPlaying = false;
+      state.isPaused = false;
+      state.isStopped = true;
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+    });
   }
 
   async leave(guildId: string): Promise<void> {
-    this.logger.info({ guildId }, "Leaving voice channel and clearing queue");
-    this.cancelPlaylistLoads(guildId);
-    this.clearTrackFailureRecovery(guildId);
-    this.suppressedVoiceDisconnectGuilds.add(guildId);
-    await this.audioBackend.leave(guildId);
-    await this.queueRepository.deleteQueue(guildId);
+    await this.runGuildOperation(guildId, async () => {
+      this.logger.info({ guildId }, "Leaving voice channel and clearing queue");
+      this.cancelPlaylistLoads(guildId);
+      this.clearTrackFailureRecovery(guildId);
+      this.suppressedVoiceDisconnectGuilds.add(guildId);
+      await this.audioBackend.leave(guildId);
+      await this.queueRepository.deleteQueue(guildId);
+    });
   }
 
   async disconnectKeepingQueue(guildId: string): Promise<GuildQueueState> {
-    this.logger.info({ guildId }, "Leaving voice channel and keeping queue");
-    this.cancelPlaylistLoads(guildId);
-    this.clearTrackFailureRecovery(guildId);
-    this.suppressedVoiceDisconnectGuilds.add(guildId);
-    await this.audioBackend.leave(guildId);
-    const state = await this.getQueue(guildId);
-    return this.normalizeDisconnectedState(state);
+    return this.runGuildOperation(guildId, async () => {
+      this.logger.info({ guildId }, "Leaving voice channel and keeping queue");
+      this.cancelPlaylistLoads(guildId);
+      this.clearTrackFailureRecovery(guildId);
+      this.suppressedVoiceDisconnectGuilds.add(guildId);
+      await this.audioBackend.leave(guildId);
+      const state = await this.getQueue(guildId);
+      return this.normalizeDisconnectedState(state);
+    });
   }
 
   async resume(guildId: string, shardId: number): Promise<void> {
-    const state = await this.getQueue(guildId);
-    if (!state.voiceChannelId || !state.textChannelId) {
-      return;
-    }
+    await this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      if (!state.voiceChannelId || !state.textChannelId) {
+        return;
+      }
 
-    await this.audioBackend.join({
-      guildId,
-      voiceChannelId: state.voiceChannelId,
-      textChannelId: state.textChannelId,
-      shardId
+      await this.audioBackend.join({
+        guildId,
+        voiceChannelId: state.voiceChannelId,
+        textChannelId: state.textChannelId,
+        shardId
+      });
+
+      if (state.currentTrack) {
+        await this.startPlaybackFromCurrent(guildId, state, true);
+      }
     });
-
-    if (state.currentTrack) {
-      await this.startPlaybackFromCurrent(guildId, state, true);
-    }
   }
 
   async normalizeRecoveredQueue(guildId: string): Promise<GuildQueueState> {
-    const state = await this.getQueue(guildId);
-    return this.normalizeDisconnectedState(state);
+    return this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      return this.normalizeDisconnectedState(state);
+    });
   }
 
   async getQueue(guildId: string): Promise<GuildQueueState> {
@@ -393,44 +422,52 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   }
 
   async removeUpcomingTrack(guildId: string, queueIndex: number): Promise<QueueTrack> {
-    const state = await this.getQueue(guildId);
-    if (queueIndex < 0 || queueIndex >= state.upcomingTracks.length) {
-      throw new MusicBotError("QUEUE_INDEX_INVALID", "削除対象の曲が見つかりません。");
-    }
+    return this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      if (queueIndex < 0 || queueIndex >= state.upcomingTracks.length) {
+        throw new MusicBotError("QUEUE_INDEX_INVALID", "削除対象の曲が見つかりません。");
+      }
 
-    const [removedTrack] = state.upcomingTracks.splice(queueIndex, 1);
-    this.adjustPlaylistInsertIndexAfterRemoval(guildId, queueIndex);
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
-    return removedTrack;
+      const [removedTrack] = state.upcomingTracks.splice(queueIndex, 1);
+      this.adjustPlaylistInsertIndexAfterRemoval(guildId, queueIndex);
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      return removedTrack;
+    });
   }
 
   async toggleRepeat(guildId: string): Promise<GuildQueueState> {
-    const state = await this.getQueue(guildId);
-    state.repeatMode = state.repeatMode === "track" ? "off" : "track";
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
-    return state;
+    return this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      state.repeatMode = state.repeatMode === "track" ? "off" : "track";
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      return state;
+    });
   }
 
   async shuffleUpcoming(guildId: string): Promise<GuildQueueState> {
-    const state = await this.getQueue(guildId);
-    if (state.upcomingTracks.length < 2) {
-      return state;
-    }
+    return this.runGuildOperation(guildId, async () => {
+      const state = await this.getQueue(guildId);
+      if (state.upcomingTracks.length < 2) {
+        return state;
+      }
 
-    this.cancelPlaylistLoads(guildId);
-    state.upcomingTracks = shuffle(state.upcomingTracks);
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
-    return state;
+      this.cancelPlaylistLoads(guildId);
+      state.upcomingTracks = shuffle(state.upcomingTracks);
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      return state;
+    });
   }
 
   async setControlMessageId(guildId: string, messageId: string | null): Promise<void> {
-    const state = await loadOrCreateQueueState(this.queueRepository, guildId);
-    state.controlMessageId = messageId;
-    state.updatedAt = Date.now();
-    await this.queueRepository.saveQueue(state);
+    await this.runGuildOperation(guildId, async () => {
+      const state = await loadOrCreateQueueState(this.queueRepository, guildId);
+      state.controlMessageId = messageId;
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+    });
   }
 
   async recoverQueues(): Promise<GuildQueueState[]> {
@@ -529,7 +566,11 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
     this.clearTrackFailureRecovery(guildId);
     const timer = setTimeout(() => {
-      void this.recoverFromTrackFailure(guildId, failedTrackId);
+      void this.runGuildOperation(guildId, () => this.recoverFromTrackFailure(guildId, failedTrackId)).catch(
+        (error) => {
+          this.logger.error({ err: error, guildId }, "Failed to recover from track failure");
+        }
+      );
     }, 1500);
     this.trackFailureRecoveryTimers.set(guildId, timer);
   }
@@ -551,6 +592,26 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       this.logger.warn({ err: error, guildId }, "Failed to stop failed track during recovery");
     });
     await this.advanceQueue(guildId);
+  }
+
+  private async runGuildOperation<T>(guildId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.guildOperations.get(guildId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => current);
+    this.guildOperations.set(guildId, chain);
+
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.guildOperations.get(guildId) === chain) {
+        this.guildOperations.delete(guildId);
+      }
+    }
   }
 
   private clearTrackFailureRecovery(guildId: string): void {
@@ -924,17 +985,24 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
         return;
       }
 
-      const state = await this.getQueue(guildId);
-      if ((this.playlistLoadGeneration.get(guildId) ?? 0) !== generation) {
-        return;
-      }
-
       const queuedTracks = page.tracks.map((track) => createQueueTrack(track, requestedBy));
-      state.upcomingTracks.splice(loader.insertIndex, 0, ...queuedTracks);
-      loader.insertIndex += queuedTracks.length;
-      state.updatedAt = Date.now();
-      await this.queueRepository.saveQueue(state);
-      this.prefetchQueueTracks(state);
+      await this.runGuildOperation(guildId, async () => {
+        const currentLoader = this.playlistLoadState.get(guildId);
+        if (!currentLoader || currentLoader.generation !== generation) {
+          return;
+        }
+
+        const state = await this.getQueue(guildId);
+        if ((this.playlistLoadGeneration.get(guildId) ?? 0) !== generation) {
+          return;
+        }
+
+        state.upcomingTracks.splice(currentLoader.insertIndex, 0, ...queuedTracks);
+        currentLoader.insertIndex += queuedTracks.length;
+        state.updatedAt = Date.now();
+        await this.queueRepository.saveQueue(state);
+        this.prefetchQueueTracks(state);
+      });
       offset = page.nextOffset;
     }
 

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { DefaultMusicService } from "../src/queue/music-service.js";
-import { InMemoryQueueRepository, InMemoryStatsRepository } from "../src/storage/repositories.js";
+import {
+  InMemoryQueueRepository,
+  InMemoryStatsRepository,
+  type QueueRepository
+} from "../src/storage/repositories.js";
 import type { JoinVoiceRequest, ResolvedTrack } from "../src/audio/audio-backend.js";
 import { AudioBackend, type PlaylistResolveOptions, type ResolvedPlaylist } from "../src/audio/audio-backend.js";
 import pino from "pino";
@@ -158,10 +162,28 @@ class FakeAudioBackend extends AudioBackend {
   async resume(): Promise<void> {}
 }
 
+class ConcurrentSaveDetectingQueueRepository extends InMemoryQueueRepository {
+  private saveInProgress = false;
+
+  async saveQueue(state: Parameters<QueueRepository["saveQueue"]>[0]): Promise<void> {
+    if (this.saveInProgress) {
+      throw new Error("concurrent save detected");
+    }
+
+    this.saveInProgress = true;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await super.saveQueue(state);
+    } finally {
+      this.saveInProgress = false;
+    }
+  }
+}
+
 describe("DefaultMusicService", () => {
-  function createService(audio: FakeAudioBackend) {
+  function createService(audio: FakeAudioBackend, queueRepository: QueueRepository = new InMemoryQueueRepository()) {
     return new DefaultMusicService(
-      new InMemoryQueueRepository(),
+      queueRepository,
       audio,
       new BotStatsService(new InMemoryStatsRepository()),
       pino({ enabled: false })
@@ -452,6 +474,25 @@ describe("DefaultMusicService", () => {
     expect(queue.repeatMode).toBe("off");
 
     vi.useRealTimers();
+  });
+
+  it("serializes same-guild mutations to avoid overlapping queue saves", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio, new ConcurrentSaveDetectingQueueRepository());
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-1", requestedBy: "user-1", requestedAt: Date.now() }
+    );
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query: "song-2", requestedBy: "user-2", requestedAt: Date.now() }
+    );
+
+    await expect(Promise.all([service.skip("guild-1"), service.toggleRepeat("guild-1")])).resolves.toBeDefined();
+
+    const queue = await service.getQueue("guild-1");
+    expect(queue.currentTrack?.title).toBe("Test Track song-2");
   });
 
   it("records total and unique track stats when tracks start", async () => {
