@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from youtube import (
     clear_resolver_caches,
     extract_playback_source,
+    get_playlist_track_limit,
     get_yt_dlp_timeout_seconds,
     is_mix_playlist_url,
     map_track,
@@ -23,6 +24,11 @@ class NormalizePlaylistUrlTest(unittest.TestCase):
     def test_detects_mix_playlist_urls(self) -> None:
         self.assertTrue(is_mix_playlist_url("https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1"))
         self.assertFalse(is_mix_playlist_url("https://www.youtube.com/playlist?list=PL12345"))
+        self.assertEqual(
+            get_playlist_track_limit("https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1"),
+            25,
+        )
+        self.assertEqual(get_playlist_track_limit("https://www.youtube.com/playlist?list=PL12345"), 100)
 
     def test_preserves_mix_watch_context(self) -> None:
         url = "https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1"
@@ -106,9 +112,20 @@ class PlaylistEntryMappingTest(unittest.TestCase):
         self.assertEqual(second[0].title, "Cached Track")
         self.assertEqual(run_yt_dlp.call_count, 1)
 
-    def test_resolve_playlist_rejects_mix_urls(self) -> None:
-        with self.assertRaisesRegex(Exception, "Mix or Radio"):
-            resolve_playlist("https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1")
+    @patch("youtube.run_yt_dlp")
+    def test_resolve_playlist_caps_mix_urls_to_mix_limit(self, run_yt_dlp) -> None:
+        run_yt_dlp.return_value = {
+            "entries": [{"id": f"id{index}", "title": f"Entry {index}"} for index in range(40)]
+        }
+
+        tracks, total_count, next_offset = resolve_playlist(
+            "https://www.youtube.com/watch?v=M-Eyhjkepy0&list=RDATgx&index=9&start_radio=1",
+            limit=50,
+        )
+
+        self.assertEqual(len(tracks), 25)
+        self.assertEqual(total_count, 25)
+        self.assertIsNone(next_offset)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ logger = logging.getLogger("resolver.youtube")
 
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
+MAX_MIX_TRACKS = 25
 DEFAULT_PLAYLIST_PAGE_SIZE = 50
 DEFAULT_YTDLP_TIMEOUT_SECONDS = 30
 DEFAULT_RESOLVER_CACHE_TTL_SECONDS = 300
@@ -54,21 +55,20 @@ def resolve_track(url: str) -> list[TrackPayload]:
 def resolve_playlist(url: str, *, offset: int = 0, limit: int = DEFAULT_PLAYLIST_PAGE_SIZE) -> tuple[list[TrackPayload], int, int | None]:
     if not is_playlist_url(url):
         raise ResolverError("BAD_REQUEST", "A playlist URL is required", 400)
-    if is_mix_playlist_url(url):
-        raise ResolverError("PLAYLIST_UNSUPPORTED", "YouTube Mix or Radio URLs are not supported on this endpoint", 400)
 
     normalized_url = normalize_playlist_url(url)
+    track_limit = get_playlist_track_limit(url)
     raw_entries = get_cached_payload(_playlist_entries_cache, normalized_url)
     if raw_entries is None:
-        payload = run_yt_dlp(normalized_url, flat_playlist=True)
+        payload = run_yt_dlp(normalized_url, flat_playlist=True, playlist_end=track_limit)
         raw_entries = payload.get("entries", [])
         set_cached_payload(_playlist_entries_cache, normalized_url, raw_entries)
 
-    total_count = min(len(raw_entries), MAX_PLAYLIST_TRACKS)
+    total_count = min(len(raw_entries), track_limit)
     if offset >= total_count:
         return [], total_count, None
 
-    page_size = max(1, min(limit, MAX_PLAYLIST_TRACKS))
+    page_size = max(1, min(limit, track_limit))
     page_entries = raw_entries[offset : offset + page_size]
     entries = map_entries(page_entries, page_size)
     if not entries:
@@ -92,14 +92,14 @@ def resolve_playlist(url: str, *, offset: int = 0, limit: int = DEFAULT_PLAYLIST
     return entries, total_count, next_offset
 
 
-def run_yt_dlp(identifier: str, *, flat_playlist: bool = False) -> dict[str, Any]:
+def run_yt_dlp(identifier: str, *, flat_playlist: bool = False, playlist_end: int | None = None) -> dict[str, Any]:
     command = [
         *get_common_yt_dlp_command(),
         "--dump-single-json",
         "--skip-download",
     ]
     if flat_playlist:
-        command.extend(["--flat-playlist", "--playlist-end", str(MAX_PLAYLIST_TRACKS)])
+        command.extend(["--flat-playlist", "--playlist-end", str(playlist_end or MAX_PLAYLIST_TRACKS)])
     else:
         command.extend(["--format", "bestaudio/best"])
     command.append(identifier)
@@ -191,6 +191,10 @@ def is_mix_playlist_url(url: str) -> bool:
     return bool(query.get("start_radio", [None])[0]) or (
         isinstance(playlist_id, str) and playlist_id.startswith("RD")
     )
+
+
+def get_playlist_track_limit(url: str) -> int:
+    return MAX_MIX_TRACKS if is_mix_playlist_url(url) else MAX_PLAYLIST_TRACKS
 
 
 def has_video_id(url: str) -> bool:

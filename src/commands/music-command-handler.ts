@@ -168,13 +168,6 @@ export class MusicCommandHandler {
       throw new MusicBotError("PLAYLIST_URL_REQUIRED", "YouTubeプレイリストURLを指定してください。");
     }
 
-    if (isYoutubeMixUrl(query)) {
-      throw new MusicBotError(
-        "PLAYLIST_URL_REQUIRED",
-        "YouTube Mix / Radio URL は !playlist では扱えません。通常のプレイリストURLを使うか !play を使ってください。"
-      );
-    }
-
     const queueBeforeEnqueue = await this.musicService.getQueue(context.guildId);
     const playlist = await this.musicService.enqueuePlaylist(
       {
@@ -420,20 +413,6 @@ function isPlaylistUrl(value: string): boolean {
       (url.hostname.includes("youtube.com") || url.hostname.includes("youtu.be")) &&
       url.searchParams.has("list")
     );
-  } catch {
-    return false;
-  }
-}
-
-function isYoutubeMixUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (!(url.hostname.includes("youtube.com") || url.hostname.includes("youtu.be"))) {
-      return false;
-    }
-
-    const listId = url.searchParams.get("list");
-    return Boolean(url.searchParams.get("start_radio")) || (listId?.startsWith("RD") ?? false);
   } catch {
     return false;
   }
