@@ -88,36 +88,8 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
     const hydrated: ResolvedTrack[] = [];
 
     for (const track of tracks) {
-      if (track.playbackUrl) {
-        hydrated.push({
-          trackId: track.trackId,
-          title: track.title,
-          url: track.url,
-          durationMs: track.durationMs,
-          artworkUrl: track.artworkUrl,
-          playbackIdentifier: track.playbackUrl,
-          source: "youtube"
-        });
-        continue;
-      }
-
       try {
-        const resolved = await this.playbackBackend.resolve(track.playbackUrl ?? track.url);
-        const playableTrack = resolved[0];
-        if (!playableTrack) {
-          throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました");
-        }
-
-        hydrated.push({
-          trackId: playableTrack.trackId,
-          title: track.title,
-          url: track.url,
-          durationMs: track.durationMs,
-          artworkUrl: track.artworkUrl,
-          encodedTrack: playableTrack.encodedTrack,
-          playbackIdentifier: playableTrack.playbackIdentifier,
-          source: "youtube"
-        });
+        hydrated.push(await this.hydrateTrack(track));
       } catch (error) {
         this.logger.warn(
           { err: error, trackUrl: track.url, playbackUrl: track.playbackUrl },
@@ -140,6 +112,60 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
     }
 
     return hydrated;
+  }
+
+  private async hydrateTrack(track: ResolverSearchResult): Promise<ResolvedTrack> {
+    if (track.playbackUrl) {
+      return {
+        trackId: track.trackId,
+        title: track.title,
+        url: track.url,
+        durationMs: track.durationMs,
+        artworkUrl: track.artworkUrl,
+        playbackIdentifier: track.playbackUrl,
+        source: "youtube"
+      };
+    }
+
+    const proxiedTrack = await this.tryResolveTrackViaResolver(track.url);
+    if (proxiedTrack?.playbackUrl) {
+      return {
+        trackId: track.trackId,
+        title: track.title,
+        url: track.url,
+        durationMs: track.durationMs,
+        artworkUrl: track.artworkUrl,
+        playbackIdentifier: proxiedTrack.playbackUrl,
+        source: "youtube"
+      };
+    }
+
+    const resolved = await this.playbackBackend.resolve(track.url);
+    const playableTrack = resolved[0];
+    if (!playableTrack) {
+      throw new MusicBotError("TRACK_RESOLVE_FAILED", "曲情報の取得に失敗しました");
+    }
+
+    return {
+      trackId: playableTrack.trackId,
+      title: track.title,
+      url: track.url,
+      durationMs: track.durationMs,
+      artworkUrl: track.artworkUrl,
+      encodedTrack: playableTrack.encodedTrack,
+      playbackIdentifier: playableTrack.playbackIdentifier,
+      source: "youtube"
+    };
+  }
+
+  private async tryResolveTrackViaResolver(url: string): Promise<ResolverSearchResult | null> {
+    try {
+      const resolved = await this.resolverClient.resolveTrack(url);
+      return resolved[0] ?? null;
+    } catch (error) {
+      this.logger.warn({ err: error, trackUrl: url }, "Resolver track lookup failed during hydration");
+      return null;
+    }
   }
 }
 

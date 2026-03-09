@@ -57,6 +57,8 @@ class FakePlaybackBackend extends AudioBackend {
 }
 
 class FakeResolverClient implements ResolverClient {
+  public readonly resolveTrackCalls: string[] = [];
+
   constructor(
     private readonly searchResults: ResolverSearchResult[],
     private readonly trackResults: ResolverSearchResult[],
@@ -67,7 +69,10 @@ class FakeResolverClient implements ResolverClient {
     return this.searchResults;
   }
 
-  async resolveTrack(): Promise<ResolverSearchResult[]> {
+  async resolveTrack(url?: string): Promise<ResolverSearchResult[]> {
+    if (url) {
+      this.resolveTrackCalls.push(url);
+    }
     return this.trackResults;
   }
 
@@ -135,6 +140,40 @@ describe("ResolverBackedAudioBackend", () => {
       "encoded:https://www.youtube.com/watch?v=one",
       "encoded:https://www.youtube.com/watch?v=two"
     ]);
+  });
+
+  it("prefers resolver track playback urls while hydrating playlist entries", async () => {
+    const playback = new FakePlaybackBackend();
+    const resolver = new FakeResolverClient(
+      [],
+      [
+        {
+          trackId: "youtube:one",
+          title: "One",
+          url: "https://www.youtube.com/watch?v=one",
+          playbackUrl: "https://resolver.example/stream/one",
+          durationMs: 1000,
+          source: "youtube"
+        }
+      ],
+      [
+        {
+          trackId: "youtube:one",
+          title: "One",
+          url: "https://www.youtube.com/watch?v=one",
+          durationMs: 1000,
+          source: "youtube"
+        }
+      ]
+    );
+    const backend = new ResolverBackedAudioBackend(resolver, playback, pino({ enabled: false }));
+
+    const results = await backend.resolvePlaylist("https://www.youtube.com/playlist?list=abc");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.playbackIdentifier).toBe("https://resolver.example/stream/one");
+    expect(playback.resolveCalls).toEqual([]);
+    expect(resolver.resolveTrackCalls).toEqual(["https://www.youtube.com/watch?v=one"]);
   });
 
   it("delegates playback operations", async () => {

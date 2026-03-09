@@ -18,6 +18,7 @@ export interface MusicUiService {
 
 export class DiscordMusicUiService implements MusicUiService {
   private autoRefreshTimer: NodeJS.Timeout | null = null;
+  private readonly guildOperations = new Map<string, Promise<void>>();
 
   constructor(
     private readonly client: Client,
@@ -27,11 +28,39 @@ export class DiscordMusicUiService implements MusicUiService {
   ) {}
 
   async ensureControlMessage(guildId: string): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.ensureControlMessageInternal(guildId));
+  }
+
+  async ensureControlMessageInChannel(guildId: string, channel: TextBasedChannel): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.ensureControlMessageInChannelInternal(guildId, channel));
+  }
+
+  async recreateControlMessageInChannel(guildId: string, channel: TextBasedChannel): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.recreateControlMessageInChannelInternal(guildId, channel));
+  }
+
+  async bumpControlMessage(guildId: string): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.bumpControlMessageInternal(guildId));
+  }
+
+  async refreshControlMessage(guildId: string): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.refreshControlMessageInternal(guildId));
+  }
+
+  async invalidateControlMessage(guildId: string): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.invalidateControlMessageInternal(guildId));
+  }
+
+  async deleteControlMessage(guildId: string): Promise<void> {
+    await this.runGuildOperation(guildId, () => this.deleteControlMessageInternal(guildId));
+  }
+
+  private async ensureControlMessageInternal(guildId: string): Promise<void> {
     const state = await this.musicService.getQueue(guildId);
     const language = await this.localizationService.getLanguage(guildId);
     const playbackPosition = this.musicService.getPlaybackPosition(guildId);
     if (state.controlMessageId) {
-      await this.refreshControlMessage(guildId);
+      await this.refreshControlMessageInternal(guildId);
       return;
     }
 
@@ -48,12 +77,12 @@ export class DiscordMusicUiService implements MusicUiService {
     await this.musicService.setControlMessageId(guildId, message.id);
   }
 
-  async ensureControlMessageInChannel(guildId: string, channel: TextBasedChannel): Promise<void> {
+  private async ensureControlMessageInChannelInternal(guildId: string, channel: TextBasedChannel): Promise<void> {
     const state = await this.musicService.getQueue(guildId);
     const language = await this.localizationService.getLanguage(guildId);
     const playbackPosition = this.musicService.getPlaybackPosition(guildId);
     if (state.controlMessageId) {
-      await this.refreshControlMessage(guildId);
+      await this.refreshControlMessageInternal(guildId);
       return;
     }
 
@@ -71,27 +100,27 @@ export class DiscordMusicUiService implements MusicUiService {
     await this.musicService.setControlMessageId(guildId, message.id);
   }
 
-  async recreateControlMessageInChannel(guildId: string, channel: TextBasedChannel): Promise<void> {
+  private async recreateControlMessageInChannelInternal(guildId: string, channel: TextBasedChannel): Promise<void> {
     if (await this.isControlMessageLatest(guildId, channel)) {
-      await this.refreshControlMessage(guildId);
+      await this.refreshControlMessageInternal(guildId);
       return;
     }
 
-    await this.deleteControlMessage(guildId);
+    await this.deleteControlMessageInternal(guildId);
     await this.musicService.setControlMessageId(guildId, null);
-    await this.ensureControlMessageInChannel(guildId, channel);
+    await this.ensureControlMessageInChannelInternal(guildId, channel);
   }
 
-  async bumpControlMessage(guildId: string): Promise<void> {
+  private async bumpControlMessageInternal(guildId: string): Promise<void> {
     const channel = await this.getTextChannel(guildId);
     if (!channel) {
       return;
     }
 
-    await this.recreateControlMessageInChannel(guildId, channel);
+    await this.recreateControlMessageInChannelInternal(guildId, channel);
   }
 
-  async refreshControlMessage(guildId: string): Promise<void> {
+  private async refreshControlMessageInternal(guildId: string): Promise<void> {
     const state = await this.musicService.getQueue(guildId);
     const language = await this.localizationService.getLanguage(guildId);
     const playbackPosition = this.musicService.getPlaybackPosition(guildId);
@@ -119,7 +148,7 @@ export class DiscordMusicUiService implements MusicUiService {
     this.logger.info({ guildId, messageId: message.id }, "Updated control message");
   }
 
-  async invalidateControlMessage(guildId: string): Promise<void> {
+  private async invalidateControlMessageInternal(guildId: string): Promise<void> {
     const state = await this.musicService.getQueue(guildId);
     const channel = await this.getTextChannel(guildId);
     if (!channel || !state.controlMessageId) {
@@ -137,7 +166,7 @@ export class DiscordMusicUiService implements MusicUiService {
     });
   }
 
-  async deleteControlMessage(guildId: string): Promise<void> {
+  private async deleteControlMessageInternal(guildId: string): Promise<void> {
     const state = await this.musicService.getQueue(guildId);
     const channel = await this.getTextChannel(guildId);
     if (!channel || !state.controlMessageId) {
@@ -237,6 +266,26 @@ export class DiscordMusicUiService implements MusicUiService {
     } catch (error) {
       this.logger.warn({ err: error, guildId, channelId: channel.id }, "Failed to inspect latest channel message");
       return false;
+    }
+  }
+
+  private async runGuildOperation(guildId: string, action: () => Promise<void>): Promise<void> {
+    const previous = this.guildOperations.get(guildId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => current);
+    this.guildOperations.set(guildId, chain);
+
+    await previous;
+    try {
+      await action();
+    } finally {
+      release();
+      if (this.guildOperations.get(guildId) === chain) {
+        this.guildOperations.delete(guildId);
+      }
     }
   }
 }
