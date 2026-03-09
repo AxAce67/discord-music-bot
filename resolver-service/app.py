@@ -67,6 +67,9 @@ async def stream_media(token: str, request: Request) -> Response:
 
 
 async def try_open_upstream_stream(source, request: Request) -> Response | None:
+    if not should_use_direct_proxy():
+        return None
+
     if not source.upstream_url:
         return None
 
@@ -139,6 +142,10 @@ async def stream_via_yt_dlp(source_url: str, request: Request) -> Response:
 async def close_upstream_stream(response: httpx.Response, client: httpx.AsyncClient) -> None:
     await response.aclose()
     await client.aclose()
+
+
+def should_use_direct_proxy() -> bool:
+    return os.getenv("RESOLVER_ENABLE_DIRECT_PROXY", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 async def chain_stream_chunks(first_chunk: bytes, iterator):
