@@ -202,6 +202,24 @@ describe("DefaultMusicService", () => {
     expect(audio.plays).toHaveLength(1);
   });
 
+  it("reuses cached query resolutions for repeated direct plays", async () => {
+    const audio = new FakeAudioBackend();
+    const service = createService(audio);
+    const query = "https://www.youtube.com/watch?v=abc123";
+
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query, requestedBy: "user-1", requestedAt: Date.now() }
+    );
+    await service.stop("guild-1");
+    await service.enqueue(
+      { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
+      { query, requestedBy: "user-1", requestedAt: Date.now() }
+    );
+
+    expect(audio.resolveCalls.filter((value) => value === query)).toHaveLength(1);
+  });
+
   it("enqueues all tracks from a playlist", async () => {
     const audio = new FakeAudioBackend();
     const service = createService(audio);

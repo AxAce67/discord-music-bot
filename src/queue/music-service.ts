@@ -56,6 +56,8 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly suppressedTrackEndGuilds = new Set<string>();
   private readonly suppressedVoiceDisconnectGuilds = new Set<string>();
   private readonly trackFailureRecoveryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly resolvedQueryCache = new Map<string, { tracks: ResolvedTrack[]; expiresAt: number }>();
+  private readonly resolvedQueryInflight = new Map<string, Promise<ResolvedTrack[]>>();
   private readonly playableTrackCache = new Map<string, { track: QueueTrack; expiresAt: number }>();
   private readonly playableTrackInflight = new Map<string, Promise<QueueTrack>>();
   private readonly playlistLoadState = new Map<string, { generation: number; insertIndex: number }>();
@@ -141,7 +143,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     state.textChannelId = context.textChannelId;
 
     const joinPromise = this.startJoinIfNeeded(context, "No active Lavalink connection, joining before playback");
-    const resolved = await this.audioBackend.resolve(request.query);
+    const resolved = await this.resolveQuery(request.query);
     await joinPromise;
     const selectedTrack = resolved[0];
 
@@ -224,7 +226,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   }
 
   async search(query: string): Promise<ResolvedTrack[]> {
-    return this.audioBackend.resolve(query);
+    return this.resolveQuery(query);
   }
 
   async enqueueResolvedTrack(context: JoinContext, track: ResolvedTrack, requestedBy: string): Promise<QueueTrack> {
@@ -778,6 +780,53 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     });
   }
 
+  private async resolveQuery(query: string): Promise<ResolvedTrack[]> {
+    const cached = this.getCachedResolvedQuery(query);
+    if (cached) {
+      return cached;
+    }
+
+    const inflight = this.resolvedQueryInflight.get(query);
+    if (inflight) {
+      return inflight;
+    }
+
+    const resolutionPromise = this.audioBackend.resolve(query).then((tracks) => {
+      this.cacheResolvedQuery(query, tracks);
+      return cloneResolvedTracks(tracks);
+    });
+
+    this.resolvedQueryInflight.set(query, resolutionPromise);
+    try {
+      return await resolutionPromise;
+    } finally {
+      if (this.resolvedQueryInflight.get(query) === resolutionPromise) {
+        this.resolvedQueryInflight.delete(query);
+      }
+    }
+  }
+
+  private getCachedResolvedQuery(query: string): ResolvedTrack[] | null {
+    const cached = this.resolvedQueryCache.get(query);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt <= Date.now()) {
+      this.resolvedQueryCache.delete(query);
+      return null;
+    }
+
+    return cloneResolvedTracks(cached.tracks);
+  }
+
+  private cacheResolvedQuery(query: string, tracks: ResolvedTrack[]): void {
+    this.resolvedQueryCache.set(query, {
+      tracks: cloneResolvedTracks(tracks),
+      expiresAt: Date.now() + RESOLVED_QUERY_CACHE_TTL_MS
+    });
+  }
+
   private async resolveEntirePlaylist(query: string): Promise<{ tracks: ResolvedTrack[]; totalCount: number }> {
     const aggregatedTracks: ResolvedTrack[] = [];
     let offset = 0;
@@ -931,3 +980,8 @@ const PLAYABLE_TRACK_CACHE_TTL_MS = 10 * 60 * 1000;
 const PLAYBACK_PREFETCH_COUNT = 3;
 const PLAYLIST_INITIAL_BATCH_SIZE = 25;
 const PLAYLIST_BACKGROUND_BATCH_SIZE = 50;
+const RESOLVED_QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function cloneResolvedTracks(tracks: ResolvedTrack[]): ResolvedTrack[] {
+  return tracks.map((track) => ({ ...track }));
+}
