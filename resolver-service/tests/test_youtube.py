@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from youtube import get_yt_dlp_timeout_seconds, normalize_playlist_url
+from youtube import get_yt_dlp_timeout_seconds, map_track, normalize_playlist_url
 
 
 class NormalizePlaylistUrlTest(unittest.TestCase):
@@ -34,6 +34,15 @@ class YtDlpTimeoutTest(unittest.TestCase):
     def test_uses_timeout_from_env(self) -> None:
         with patch.dict("os.environ", {"YTDLP_TIMEOUT_SECONDS": "45"}, clear=True):
             self.assertEqual(get_yt_dlp_timeout_seconds(), 45)
+
+
+class PlaylistEntryMappingTest(unittest.TestCase):
+    def test_maps_flat_playlist_entries_to_watch_urls(self) -> None:
+        track = map_track({"id": "abc123", "title": "Flat Entry"})
+        self.assertIsNotNone(track)
+        self.assertEqual(track.url, "https://www.youtube.com/watch?v=abc123")
+        self.assertIsNone(track.playbackUrl)
+        self.assertEqual(track.durationMs, 0)
 
 
 if __name__ == "__main__":

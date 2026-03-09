@@ -43,7 +43,7 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
     if not is_playlist_url(url):
         raise ResolverError("BAD_REQUEST", "A playlist URL is required", 400)
 
-    payload = run_yt_dlp(normalize_playlist_url(url))
+    payload = run_yt_dlp(normalize_playlist_url(url), flat_playlist=True)
     entries = map_entries(payload.get("entries", []), MAX_PLAYLIST_TRACKS)
     if not entries:
         raise ResolverError("PLAYLIST_NOT_FOUND", "No playable playlist entries found", 404)
@@ -51,15 +51,17 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
     return entries
 
 
-def run_yt_dlp(identifier: str) -> dict[str, Any]:
+def run_yt_dlp(identifier: str, *, flat_playlist: bool = False) -> dict[str, Any]:
     command = [
         *get_common_yt_dlp_command(),
         "--dump-single-json",
         "--skip-download",
-        "--format",
-        "bestaudio/best",
-        identifier,
     ]
+    if flat_playlist:
+        command.extend(["--flat-playlist", "--playlist-end", str(MAX_PLAYLIST_TRACKS)])
+    else:
+        command.extend(["--format", "bestaudio/best"])
+    command.append(identifier)
 
     try:
         completed = subprocess.run(
