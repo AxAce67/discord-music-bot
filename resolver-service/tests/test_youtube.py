@@ -81,12 +81,13 @@ class PlaylistEntryMappingTest(unittest.TestCase):
             },
         ]
 
-        tracks = resolve_playlist("https://www.youtube.com/playlist?list=PL12345")
+        tracks, total_count, next_offset = resolve_playlist("https://www.youtube.com/playlist?list=PL12345", limit=1)
 
-        self.assertEqual(len(tracks), 2)
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(total_count, 2)
+        self.assertEqual(next_offset, 1)
         self.assertEqual(tracks[0].title, "Detailed Entry 1")
         self.assertEqual(tracks[0].playbackUrl, "http://resolver/v1/stream/token-1")
-        self.assertIsNone(tracks[1].playbackUrl)
         self.assertEqual(run_yt_dlp.call_count, 2)
 
     @patch("youtube.run_yt_dlp")

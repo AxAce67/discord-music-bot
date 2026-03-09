@@ -11,7 +11,7 @@ from starlette.background import BackgroundTask
 from starlette.responses import Response, StreamingResponse
 
 from errors import ResolverError
-from models import HealthResponse, ResolvePlaylistRequest, ResolveRequest, SearchRequest, TracksResponse
+from models import HealthResponse, PlaylistTracksResponse, ResolvePlaylistRequest, ResolveRequest, SearchRequest, TracksResponse
 from streams import get_playback_source
 from youtube import get_stream_command, resolve_playlist, resolve_track, search_tracks
 
@@ -47,9 +47,10 @@ async def resolve(payload: ResolveRequest) -> TracksResponse:
     return TracksResponse(tracks=resolve_track(str(payload.url)))
 
 
-@app.post("/v1/resolve-playlist", response_model=TracksResponse)
-async def resolve_playlist_endpoint(payload: ResolvePlaylistRequest) -> TracksResponse:
-    return TracksResponse(tracks=resolve_playlist(str(payload.url)))
+@app.post("/v1/resolve-playlist", response_model=PlaylistTracksResponse)
+async def resolve_playlist_endpoint(payload: ResolvePlaylistRequest) -> PlaylistTracksResponse:
+    tracks, total_count, next_offset = resolve_playlist(str(payload.url), offset=payload.offset, limit=payload.limit)
+    return PlaylistTracksResponse(tracks=tracks, totalCount=total_count, nextOffset=next_offset)
 
 
 @app.api_route("/v1/stream/{token}", methods=["GET", "HEAD"])

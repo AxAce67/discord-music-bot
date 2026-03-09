@@ -1,5 +1,12 @@
 import type pino from "pino";
-import type { AudioBackend, JoinVoiceRequest, ResolvedTrack, ResolverSearchResult } from "./audio-backend.js";
+import type {
+  AudioBackend,
+  JoinVoiceRequest,
+  PlaylistResolveOptions,
+  ResolvedPlaylist,
+  ResolvedTrack,
+  ResolverSearchResult
+} from "./audio-backend.js";
 import { AudioBackend as AbstractAudioBackend } from "./audio-backend.js";
 import { MusicBotError } from "../errors/music-error.js";
 import type { ResolverClient } from "../resolver/resolver-client.js";
@@ -42,21 +49,25 @@ export class ResolverBackedAudioBackend extends AbstractAudioBackend {
     return this.hydrateTracks(tracks, "TRACK_NOT_FOUND", true);
   }
 
-  async resolvePlaylist(query: string): Promise<ResolvedTrack[]> {
-    const tracks = await this.resolverClient.resolvePlaylist(query);
-    if (tracks.length === 0) {
+  async resolvePlaylist(query: string, options?: PlaylistResolveOptions): Promise<ResolvedPlaylist> {
+    const playlist = await this.resolverClient.resolvePlaylist(query, options);
+    if (playlist.tracks.length === 0) {
       throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした");
     }
 
-    return tracks.map((track) => ({
-      trackId: track.trackId,
-      title: track.title,
-      url: track.url,
-      durationMs: track.durationMs,
-      artworkUrl: track.artworkUrl,
-      playbackIdentifier: track.playbackUrl,
-      source: "youtube"
-    }));
+    return {
+      tracks: playlist.tracks.map((track) => ({
+        trackId: track.trackId,
+        title: track.title,
+        url: track.url,
+        durationMs: track.durationMs,
+        artworkUrl: track.artworkUrl,
+        playbackIdentifier: track.playbackUrl,
+        source: "youtube"
+      })),
+      totalCount: playlist.totalCount,
+      nextOffset: playlist.nextOffset
+    };
   }
 
   async play(

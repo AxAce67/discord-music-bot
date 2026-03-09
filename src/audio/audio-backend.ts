@@ -22,6 +22,17 @@ export interface ResolverSearchResult {
   source: "youtube";
 }
 
+export interface PlaylistResolveOptions {
+  offset?: number;
+  limit?: number;
+}
+
+export interface ResolvedPlaylist {
+  tracks: ResolvedTrack[];
+  totalCount: number;
+  nextOffset?: number;
+}
+
 export interface JoinVoiceRequest {
   guildId: GuildId;
   voiceChannelId: VoiceChannelId;
@@ -35,7 +46,7 @@ export abstract class AudioBackend extends EventEmitter {
   abstract join(request: JoinVoiceRequest): Promise<void>;
   abstract leave(guildId: GuildId): Promise<void>;
   abstract resolve(query: string): Promise<ResolvedTrack[]>;
-  abstract resolvePlaylist(query: string): Promise<ResolvedTrack[]>;
+  abstract resolvePlaylist(query: string, options?: PlaylistResolveOptions): Promise<ResolvedPlaylist>;
   abstract play(
     guildId: GuildId,
     track: {

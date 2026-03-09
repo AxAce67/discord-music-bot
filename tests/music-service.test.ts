@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DefaultMusicService } from "../src/queue/music-service.js";
 import { InMemoryQueueRepository, InMemoryStatsRepository } from "../src/storage/repositories.js";
 import type { JoinVoiceRequest, ResolvedTrack } from "../src/audio/audio-backend.js";
-import { AudioBackend } from "../src/audio/audio-backend.js";
+import { AudioBackend, type PlaylistResolveOptions, type ResolvedPlaylist } from "../src/audio/audio-backend.js";
 import pino from "pino";
 import { BotStatsService } from "../src/stats/bot-stats-service.js";
 
@@ -10,6 +10,7 @@ class FakeAudioBackend extends AudioBackend {
   public readonly plays: Array<{ encodedTrack?: string; playbackIdentifier?: string }> = [];
   public readonly joins: JoinVoiceRequest[] = [];
   public readonly resolveCalls: string[] = [];
+  public readonly resolvePlaylistCalls: Array<{ query: string; offset?: number; limit?: number }> = [];
   public stopCalls = 0;
   public connected = false;
   public playbackPosition = 0;
@@ -94,9 +95,10 @@ class FakeAudioBackend extends AudioBackend {
     ];
   }
 
-  async resolvePlaylist(query: string): Promise<ResolvedTrack[]> {
+  async resolvePlaylist(query: string, options?: PlaylistResolveOptions): Promise<ResolvedPlaylist> {
+    this.resolvePlaylistCalls.push({ query: String(query), offset: options?.offset, limit: options?.limit });
     if (String(query).includes("playlist")) {
-      return [
+      const allTracks: ResolvedTrack[] = [
         {
           trackId: "track-playlist-1",
           title: "Playlist Track 1",
@@ -114,9 +116,21 @@ class FakeAudioBackend extends AudioBackend {
           source: "youtube"
         }
       ];
+      const offset = options?.offset ?? 0;
+      const limit = options?.limit ?? allTracks.length;
+      const tracks = allTracks.slice(offset, offset + limit);
+      const nextOffset = offset + limit < allTracks.length ? offset + limit : undefined;
+      return {
+        tracks,
+        totalCount: allTracks.length,
+        nextOffset
+      };
     }
 
-    return this.resolve(query);
+    return {
+      tracks: await this.resolve(query),
+      totalCount: 1
+    };
   }
 
   async play(
@@ -192,12 +206,13 @@ describe("DefaultMusicService", () => {
     const audio = new FakeAudioBackend();
     const service = createService(audio);
 
-    await service.enqueuePlaylist(
+    const result = await service.enqueuePlaylist(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
       { query: "https://www.youtube.com/playlist?list=abc", requestedBy: "user-1", requestedAt: Date.now() }
     );
 
     const queue = await service.getQueue("guild-1");
+    expect(result.totalCount).toBe(2);
     expect(queue.currentTrack?.title).toBe("Playlist Track 1");
     expect(queue.upcomingTracks).toHaveLength(1);
     expect(queue.upcomingTracks[0]?.title).toBe("Playlist Track 2");
@@ -208,13 +223,14 @@ describe("DefaultMusicService", () => {
     const audio = new FakeAudioBackend();
     const service = createService(audio);
 
-    await service.enqueuePlaylist(
+    const result = await service.enqueuePlaylist(
       { guildId: "guild-1", voiceChannelId: "voice-1", textChannelId: "text-1", shardId: 0 },
       { query: "https://www.youtube.com/playlist?list=abc", requestedBy: "user-1", requestedAt: Date.now() }
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(result.totalCount).toBe(2);
     expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-1"))).toHaveLength(1);
     expect(audio.resolveCalls.filter((query) => query.endsWith("/playlist-2"))).toHaveLength(1);
 

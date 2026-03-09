@@ -1,7 +1,7 @@
 import type pino from "pino";
 import { MusicBotError } from "../errors/music-error.js";
-import type { ResolverSearchResult } from "../audio/audio-backend.js";
-import type { ResolverClient } from "./resolver-client.js";
+import type { PlaylistResolveOptions, ResolverSearchResult } from "../audio/audio-backend.js";
+import type { ResolverClient, ResolverPlaylistResult } from "./resolver-client.js";
 
 interface ResolverErrorPayload {
   error?: {
@@ -12,6 +12,11 @@ interface ResolverErrorPayload {
 
 interface ResolverTracksPayload {
   tracks?: ResolverSearchResult[];
+}
+
+interface ResolverPlaylistPayload extends ResolverTracksPayload {
+  totalCount?: number;
+  nextOffset?: number | null;
 }
 
 export class HttpResolverClient implements ResolverClient {
@@ -31,9 +36,18 @@ export class HttpResolverClient implements ResolverClient {
     return validateTracksPayload(payload);
   }
 
-  async resolvePlaylist(url: string): Promise<ResolverSearchResult[]> {
-    const payload = await this.postJson<ResolverTracksPayload>("/v1/resolve-playlist", { url });
-    return validateTracksPayload(payload);
+  async resolvePlaylist(url: string, options?: PlaylistResolveOptions): Promise<ResolverPlaylistResult> {
+    const payload = await this.postJson<ResolverPlaylistPayload>("/v1/resolve-playlist", {
+      url,
+      offset: options?.offset ?? 0,
+      limit: options?.limit
+    });
+    const tracks = validateTracksPayload(payload);
+    return {
+      tracks,
+      totalCount: validatePlaylistCount(payload, tracks.length),
+      nextOffset: typeof payload.nextOffset === "number" ? payload.nextOffset : undefined
+    };
   }
 
   private async postJson<T>(pathname: string, body: Record<string, unknown>): Promise<T> {
@@ -101,6 +115,14 @@ function validateTracksPayload(payload: ResolverTracksPayload): ResolverSearchRe
     artworkUrl: track.artworkUrl ? String(track.artworkUrl) : undefined,
     source: "youtube"
   }));
+}
+
+function validatePlaylistCount(payload: ResolverPlaylistPayload, fallback: number): number {
+  if (typeof payload.totalCount !== "number" || Number.isNaN(payload.totalCount) || payload.totalCount < 0) {
+    return fallback;
+  }
+
+  return payload.totalCount;
 }
 
 function mapResolverHttpError(status: number, payload: ResolverErrorPayload | null): MusicBotError {

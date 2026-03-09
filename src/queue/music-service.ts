@@ -24,7 +24,7 @@ export interface JoinContext {
 export interface MusicService {
   join(context: JoinContext): Promise<void>;
   enqueue(context: JoinContext, request: TrackRequest): Promise<QueueTrack>;
-  enqueuePlaylist(context: JoinContext, request: TrackRequest): Promise<QueueTrack[]>;
+  enqueuePlaylist(context: JoinContext, request: TrackRequest): Promise<PlaylistEnqueueResult>;
   search(query: string): Promise<ResolvedTrack[]>;
   enqueueResolvedTrack(context: JoinContext, track: ResolvedTrack, requestedBy: string): Promise<QueueTrack>;
   togglePause(guildId: string): Promise<GuildQueueState>;
@@ -47,12 +47,19 @@ export interface MusicService {
   prepareForShutdown(): Promise<GuildQueueState[]>;
 }
 
+export interface PlaylistEnqueueResult {
+  tracks: QueueTrack[];
+  totalCount: number;
+}
+
 export class DefaultMusicService extends EventEmitter implements MusicService {
   private readonly suppressedTrackEndGuilds = new Set<string>();
   private readonly suppressedVoiceDisconnectGuilds = new Set<string>();
   private readonly trackFailureRecoveryTimers = new Map<string, NodeJS.Timeout>();
   private readonly playableTrackCache = new Map<string, { track: QueueTrack; expiresAt: number }>();
   private readonly playableTrackInflight = new Map<string, Promise<QueueTrack>>();
+  private readonly playlistLoadState = new Map<string, { generation: number; insertIndex: number }>();
+  private readonly playlistLoadGeneration = new Map<string, number>();
   private readonly trackEndHandler = async (guildId: string) => {
     this.clearTrackFailureRecovery(guildId);
     if (this.suppressedTrackEndGuilds.delete(guildId)) {
@@ -145,7 +152,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     return this.enqueueResolved(context, state, selectedTrack, request.requestedBy);
   }
 
-  async enqueuePlaylist(context: JoinContext, request: TrackRequest): Promise<QueueTrack[]> {
+  async enqueuePlaylist(context: JoinContext, request: TrackRequest): Promise<PlaylistEnqueueResult> {
     this.logger.info(
       {
         guildId: context.guildId,
@@ -163,20 +170,23 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       context,
       "No active Lavalink connection, joining before playlist playback"
     );
-    const resolved = await this.audioBackend.resolvePlaylist(request.query);
+    const startedImmediately = state.currentTrack === null;
+    const initialPlaylist = startedImmediately
+      ? await this.audioBackend.resolvePlaylist(request.query, { offset: 0, limit: PLAYLIST_INITIAL_BATCH_SIZE })
+      : null;
+    const resolved = initialPlaylist ?? (await this.resolveEntirePlaylist(request.query));
     await joinPromise;
-    if (resolved.length === 0) {
+    if (resolved.tracks.length === 0) {
       throw new MusicBotError("TRACK_NOT_FOUND", "プレイリストの曲が見つかりませんでした。");
     }
 
-    const queuedTracks = resolved.map((track) => createQueueTrack(track, request.requestedBy));
-    const startedImmediately = state.currentTrack === null;
+    const queuedTracks = resolved.tracks.map((track) => createQueueTrack(track, request.requestedBy));
     if (!startedImmediately) {
       state.upcomingTracks.push(...queuedTracks);
       state.updatedAt = Date.now();
       await this.queueRepository.saveQueue(state);
       this.prefetchQueueTracks(state);
-      return queuedTracks;
+      return { tracks: queuedTracks, totalCount: resolved.totalCount };
     }
 
     const [firstTrack, ...upcomingTracks] = queuedTracks;
@@ -197,7 +207,20 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       throw new MusicBotError("PLAYLIST_NOT_FOUND", "プレイリストを取得できませんでした。");
     }
 
-    return [startedTrack, ...state.upcomingTracks];
+    if (initialPlaylist?.nextOffset !== undefined) {
+      const generation = this.beginPlaylistLoad(context.guildId, state.upcomingTracks.length);
+      this.loadRemainingPlaylistTracks(
+        context.guildId,
+        request.query,
+        request.requestedBy,
+        initialPlaylist.nextOffset,
+        generation
+      );
+    } else {
+      this.clearPlaylistLoad(context.guildId);
+    }
+
+    return { tracks: [startedTrack, ...state.upcomingTracks], totalCount: resolved.totalCount };
   }
 
   async search(query: string): Promise<ResolvedTrack[]> {
@@ -263,6 +286,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     if (!nextTrack) {
       throw new MusicBotError("QUEUE_EMPTY", "再開できる曲がありません。");
     }
+    this.consumePlaylistInsertSlot(context.guildId);
 
     state.voiceChannelId = context.voiceChannelId;
     state.textChannelId = context.textChannelId;
@@ -290,6 +314,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
   async stop(guildId: string): Promise<void> {
     this.logger.info({ guildId }, "Stopping playback and clearing queue");
+    this.cancelPlaylistLoads(guildId);
     this.clearTrackFailureRecovery(guildId);
     const state = await this.getQueue(guildId);
     if (state.currentTrack) {
@@ -308,6 +333,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
   async leave(guildId: string): Promise<void> {
     this.logger.info({ guildId }, "Leaving voice channel and clearing queue");
+    this.cancelPlaylistLoads(guildId);
     this.clearTrackFailureRecovery(guildId);
     this.suppressedVoiceDisconnectGuilds.add(guildId);
     await this.audioBackend.leave(guildId);
@@ -316,6 +342,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
 
   async disconnectKeepingQueue(guildId: string): Promise<GuildQueueState> {
     this.logger.info({ guildId }, "Leaving voice channel and keeping queue");
+    this.cancelPlaylistLoads(guildId);
     this.clearTrackFailureRecovery(guildId);
     this.suppressedVoiceDisconnectGuilds.add(guildId);
     await this.audioBackend.leave(guildId);
@@ -370,6 +397,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     }
 
     const [removedTrack] = state.upcomingTracks.splice(queueIndex, 1);
+    this.adjustPlaylistInsertIndexAfterRemoval(guildId, queueIndex);
     state.updatedAt = Date.now();
     await this.queueRepository.saveQueue(state);
     return removedTrack;
@@ -389,6 +417,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       return state;
     }
 
+    this.cancelPlaylistLoads(guildId);
     state.upcomingTracks = shuffle(state.upcomingTracks);
     state.updatedAt = Date.now();
     await this.queueRepository.saveQueue(state);
@@ -450,6 +479,9 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
     }
 
     const nextTrack = state.upcomingTracks.shift() ?? null;
+    if (nextTrack) {
+      this.consumePlaylistInsertSlot(guildId);
+    }
     state.currentTrack = nextTrack;
     state.isPlaying = nextTrack !== null;
     state.isPaused = false;
@@ -530,6 +562,7 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
   }
 
   private async normalizeDisconnectedState(state: GuildQueueState): Promise<GuildQueueState> {
+    this.cancelPlaylistLoads(state.guildId);
     if (state.currentTrack) {
       state.upcomingTracks.unshift(state.currentTrack);
       state.currentTrack = null;
@@ -744,6 +777,123 @@ export class DefaultMusicService extends EventEmitter implements MusicService {
       expiresAt: Date.now() + PLAYABLE_TRACK_CACHE_TTL_MS
     });
   }
+
+  private async resolveEntirePlaylist(query: string): Promise<{ tracks: ResolvedTrack[]; totalCount: number }> {
+    const aggregatedTracks: ResolvedTrack[] = [];
+    let offset = 0;
+    let totalCount = 0;
+
+    while (true) {
+      const page = await this.audioBackend.resolvePlaylist(query, { offset, limit: PLAYLIST_BACKGROUND_BATCH_SIZE });
+      aggregatedTracks.push(...page.tracks);
+      totalCount = page.totalCount;
+
+      if (page.nextOffset === undefined) {
+        break;
+      }
+
+      offset = page.nextOffset;
+    }
+
+    return { tracks: aggregatedTracks, totalCount: totalCount || aggregatedTracks.length };
+  }
+
+  private beginPlaylistLoad(guildId: string, insertIndex: number): number {
+    const generation = (this.playlistLoadGeneration.get(guildId) ?? 0) + 1;
+    this.playlistLoadGeneration.set(guildId, generation);
+    this.playlistLoadState.set(guildId, { generation, insertIndex });
+    return generation;
+  }
+
+  private clearPlaylistLoad(guildId: string): void {
+    this.playlistLoadState.delete(guildId);
+  }
+
+  private cancelPlaylistLoads(guildId: string): void {
+    this.playlistLoadGeneration.set(guildId, (this.playlistLoadGeneration.get(guildId) ?? 0) + 1);
+    this.playlistLoadState.delete(guildId);
+  }
+
+  private consumePlaylistInsertSlot(guildId: string): void {
+    const loader = this.playlistLoadState.get(guildId);
+    if (!loader || loader.insertIndex <= 0) {
+      return;
+    }
+
+    loader.insertIndex -= 1;
+  }
+
+  private adjustPlaylistInsertIndexAfterRemoval(guildId: string, queueIndex: number): void {
+    const loader = this.playlistLoadState.get(guildId);
+    if (!loader || queueIndex >= loader.insertIndex || loader.insertIndex <= 0) {
+      return;
+    }
+
+    loader.insertIndex -= 1;
+  }
+
+  private loadRemainingPlaylistTracks(
+    guildId: string,
+    query: string,
+    requestedBy: string,
+    initialOffset: number,
+    generation: number
+  ): void {
+    void this.loadRemainingPlaylistTracksInternal(guildId, query, requestedBy, initialOffset, generation).catch((error) => {
+      this.logger.warn({ err: error, guildId, query }, "Background playlist loading failed");
+    });
+  }
+
+  private async loadRemainingPlaylistTracksInternal(
+    guildId: string,
+    query: string,
+    requestedBy: string,
+    initialOffset: number,
+    generation: number
+  ): Promise<void> {
+    let offset: number | undefined = initialOffset;
+
+    while (offset !== undefined) {
+      if ((this.playlistLoadGeneration.get(guildId) ?? 0) !== generation) {
+        return;
+      }
+
+      const page = await this.audioBackend.resolvePlaylist(query, {
+        offset,
+        limit: PLAYLIST_BACKGROUND_BATCH_SIZE
+      });
+      if ((this.playlistLoadGeneration.get(guildId) ?? 0) !== generation) {
+        return;
+      }
+
+      if (page.tracks.length === 0) {
+        break;
+      }
+
+      const loader = this.playlistLoadState.get(guildId);
+      if (!loader || loader.generation !== generation) {
+        return;
+      }
+
+      const state = await this.getQueue(guildId);
+      if ((this.playlistLoadGeneration.get(guildId) ?? 0) !== generation) {
+        return;
+      }
+
+      const queuedTracks = page.tracks.map((track) => createQueueTrack(track, requestedBy));
+      state.upcomingTracks.splice(loader.insertIndex, 0, ...queuedTracks);
+      loader.insertIndex += queuedTracks.length;
+      state.updatedAt = Date.now();
+      await this.queueRepository.saveQueue(state);
+      this.prefetchQueueTracks(state);
+      offset = page.nextOffset;
+    }
+
+    const loader = this.playlistLoadState.get(guildId);
+    if (loader?.generation === generation) {
+      this.playlistLoadState.delete(guildId);
+    }
+  }
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -779,3 +929,5 @@ function createQueueTrack(selectedTrack: ResolvedTrack, requestedBy: string): Qu
 
 const PLAYABLE_TRACK_CACHE_TTL_MS = 10 * 60 * 1000;
 const PLAYBACK_PREFETCH_COUNT = 3;
+const PLAYLIST_INITIAL_BATCH_SIZE = 25;
+const PLAYLIST_BACKGROUND_BATCH_SIZE = 50;

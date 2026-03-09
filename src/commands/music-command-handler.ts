@@ -169,7 +169,7 @@ export class MusicCommandHandler {
     }
 
     const queueBeforeEnqueue = await this.musicService.getQueue(context.guildId);
-    const tracks = await this.musicService.enqueuePlaylist(
+    const playlist = await this.musicService.enqueuePlaylist(
       {
         guildId: context.guildId,
         voiceChannelId,
@@ -184,7 +184,7 @@ export class MusicCommandHandler {
     );
 
     this.queueControlMessageSync(context, true);
-    await this.sendPlaylistConfirmation(context, tracks.length, queueBeforeEnqueue.currentTrack === null);
+    await this.sendPlaylistConfirmation(context, playlist.totalCount, queueBeforeEnqueue.currentTrack === null);
   }
 
   async handleSkip(context: CommandContext): Promise<void> {

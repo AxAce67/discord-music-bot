@@ -18,6 +18,8 @@ class ResolveRequest(BaseModel):
 
 class ResolvePlaylistRequest(BaseModel):
     url: HttpUrl
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
 
 
 class TrackPayload(BaseModel):
@@ -32,3 +34,8 @@ class TrackPayload(BaseModel):
 
 class TracksResponse(BaseModel):
     tracks: list[TrackPayload]
+
+
+class PlaylistTracksResponse(TracksResponse):
+    totalCount: int
+    nextOffset: int | None = None

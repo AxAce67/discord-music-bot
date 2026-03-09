@@ -1,7 +1,7 @@
 import { Connectors, LoadType, Shoukaku, type NodeOption, type Player } from "shoukaku";
 import type { Client } from "discord.js";
 import type pino from "pino";
-import { AudioBackend, type JoinVoiceRequest, type ResolvedTrack } from "./audio-backend.js";
+import { AudioBackend, type JoinVoiceRequest, type PlaylistResolveOptions, type ResolvedPlaylist, type ResolvedTrack } from "./audio-backend.js";
 import type { AppConfig } from "../config/env.js";
 import { MusicBotError } from "../errors/music-error.js";
 
@@ -92,8 +92,12 @@ export class LavalinkAudioBackend extends AudioBackend {
     return this.resolveInternal(query, false);
   }
 
-  async resolvePlaylist(query: string): Promise<ResolvedTrack[]> {
-    return this.resolveInternal(query, true);
+  async resolvePlaylist(query: string, _options?: PlaylistResolveOptions): Promise<ResolvedPlaylist> {
+    const tracks = await this.resolveInternal(query, true);
+    return {
+      tracks,
+      totalCount: tracks.length
+    };
   }
 
   private async resolveInternal(query: string, preservePlaylistUrl: boolean): Promise<ResolvedTrack[]> {

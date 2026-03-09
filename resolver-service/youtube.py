@@ -17,6 +17,7 @@ logger = logging.getLogger("resolver.youtube")
 
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
+DEFAULT_PLAYLIST_PAGE_SIZE = 50
 DEFAULT_YTDLP_TIMEOUT_SECONDS = 30
 DEFAULT_RESOLVER_CACHE_TTL_SECONDS = 300
 _track_payload_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -50,7 +51,7 @@ def resolve_track(url: str) -> list[TrackPayload]:
     return [track]
 
 
-def resolve_playlist(url: str) -> list[TrackPayload]:
+def resolve_playlist(url: str, *, offset: int = 0, limit: int = DEFAULT_PLAYLIST_PAGE_SIZE) -> tuple[list[TrackPayload], int, int | None]:
     if not is_playlist_url(url):
         raise ResolverError("BAD_REQUEST", "A playlist URL is required", 400)
 
@@ -61,12 +62,18 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
         raw_entries = payload.get("entries", [])
         set_cached_payload(_playlist_entries_cache, normalized_url, raw_entries)
 
-    entries = map_entries(raw_entries, MAX_PLAYLIST_TRACKS)
+    total_count = min(len(raw_entries), MAX_PLAYLIST_TRACKS)
+    if offset >= total_count:
+        return [], total_count, None
+
+    page_size = max(1, min(limit, MAX_PLAYLIST_TRACKS))
+    page_entries = raw_entries[offset : offset + page_size]
+    entries = map_entries(page_entries, page_size)
     if not entries:
         raise ResolverError("PLAYLIST_NOT_FOUND", "No playable playlist entries found", 404)
 
     first_track = entries[0]
-    if first_track and not first_track.playbackUrl:
+    if offset == 0 and first_track and not first_track.playbackUrl:
         try:
             entries[0] = resolve_track(first_track.url)[0]
         except ResolverError as error:
@@ -76,7 +83,11 @@ def resolve_playlist(url: str) -> list[TrackPayload]:
                 error.code,
             )
 
-    return entries
+    next_offset = offset + len(page_entries)
+    if next_offset >= total_count:
+        next_offset = None
+
+    return entries, total_count, next_offset
 
 
 def run_yt_dlp(identifier: str, *, flat_playlist: bool = False) -> dict[str, Any]:
