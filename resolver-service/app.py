@@ -131,8 +131,28 @@ async def stream_via_yt_dlp(source_url: str, request: Request) -> Response:
     if process.stdout is None or process.stderr is None:
         raise ResolverError("UPSTREAM_FAILED", "yt-dlp stream could not be opened", 502)
 
+    try:
+        first_chunk = await asyncio.wait_for(process.stdout.read(65536), timeout=10)
+    except TimeoutError as error:
+        await close_process_stream(process)
+        raise ResolverError("UPSTREAM_FAILED", "yt-dlp stream startup timed out", 504) from error
+
+    if not first_chunk:
+        stderr_output = b""
+        try:
+            stderr_output = await asyncio.wait_for(process.stderr.read(), timeout=1)
+        except TimeoutError:
+            stderr_output = b""
+        await close_process_stream(process)
+        logging.getLogger("resolver.stream").warning(
+            "yt-dlp stream produced no output for %s: %s",
+            source_url,
+            stderr_output.decode("utf-8", errors="ignore").strip(),
+        )
+        raise ResolverError("UPSTREAM_FAILED", "yt-dlp stream produced no output", 502)
+
     return StreamingResponse(
-        iter_process_stdout(process),
+        chain_process_stdout(first_chunk, process),
         status_code=200,
         media_type="application/octet-stream",
         background=BackgroundTask(close_process_stream, process),
@@ -164,6 +184,14 @@ async def iter_process_stdout(process: asyncio.subprocess.Process):
         chunk = await process.stdout.read(65536)
         if not chunk:
             break
+        yield chunk
+
+
+async def chain_process_stdout(first_chunk: bytes, process: asyncio.subprocess.Process):
+    if first_chunk:
+        yield first_chunk
+
+    async for chunk in iter_process_stdout(process):
         yield chunk
 
 
