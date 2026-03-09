@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from youtube import get_yt_dlp_timeout_seconds, map_track, normalize_playlist_url
+from youtube import extract_playback_source, get_yt_dlp_timeout_seconds, map_track, normalize_playlist_url
 
 
 class NormalizePlaylistUrlTest(unittest.TestCase):
@@ -43,6 +43,13 @@ class PlaylistEntryMappingTest(unittest.TestCase):
         self.assertEqual(track.url, "https://www.youtube.com/watch?v=abc123")
         self.assertIsNone(track.playbackUrl)
         self.assertEqual(track.durationMs, 0)
+
+    def test_does_not_treat_youtube_watch_url_as_playback_source(self) -> None:
+        playback_url, headers = extract_playback_source(
+            {"url": "https://www.youtube.com/watch?v=abc123", "http_headers": {"User-Agent": "test"}}
+        )
+        self.assertIsNone(playback_url)
+        self.assertEqual(headers, {})
 
 
 if __name__ == "__main__":

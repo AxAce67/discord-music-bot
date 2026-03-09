@@ -228,11 +228,11 @@ def extract_playback_source(payload: dict[str, Any]) -> tuple[str | None, dict[s
             if not isinstance(entry, dict):
                 continue
             url = entry.get("url")
-            if isinstance(url, str) and url.startswith(("http://", "https://")):
+            if isinstance(url, str) and is_direct_media_url(url):
                 return url, normalize_headers(entry.get("http_headers"))
 
     direct_url = payload.get("url")
-    if isinstance(direct_url, str) and direct_url.startswith(("http://", "https://")):
+    if isinstance(direct_url, str) and is_direct_media_url(direct_url):
         return direct_url, normalize_headers(payload.get("http_headers"))
 
     return None, {}
@@ -313,3 +313,15 @@ def normalize_headers(raw_headers: Any) -> dict[str, str]:
         normalized[key] = value
 
     return normalized
+
+
+def is_direct_media_url(url: str) -> bool:
+    if not url.startswith(("http://", "https://")):
+        return False
+
+    parsed = urlparse(url)
+    host = parsed.netloc.replace("www.", "")
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
+        return False
+
+    return True
