@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from youtube import normalize_playlist_url
+from youtube import get_yt_dlp_timeout_seconds, normalize_playlist_url
 
 
 class NormalizePlaylistUrlTest(unittest.TestCase):
@@ -23,6 +24,16 @@ class NormalizePlaylistUrlTest(unittest.TestCase):
             normalize_playlist_url(url),
             "https://www.youtube.com/playlist?list=PL12345&index=4",
         )
+
+
+class YtDlpTimeoutTest(unittest.TestCase):
+    def test_uses_default_timeout_when_env_missing(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(get_yt_dlp_timeout_seconds(), 30)
+
+    def test_uses_timeout_from_env(self) -> None:
+        with patch.dict("os.environ", {"YTDLP_TIMEOUT_SECONDS": "45"}, clear=True):
+            self.assertEqual(get_yt_dlp_timeout_seconds(), 45)
 
 
 if __name__ == "__main__":

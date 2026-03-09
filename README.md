@@ -54,9 +54,11 @@ Resolver を使う場合は以下も設定します。
 
 - `RESOLVER_ENABLED=true`
 - `RESOLVER_BASE_URL=http://127.0.0.1:8080`
-- `RESOLVER_TIMEOUT_MS=8000`
+- `RESOLVER_TIMEOUT_MS=30000`
 
 Resolver 側の設定は `resolver-service/.env.example` を参照してください。
+`!playlist` が Pi / 低速回線で落ちる場合は、bot 側の `RESOLVER_TIMEOUT_MS` と resolver 側の
+`YTDLP_TIMEOUT_SECONDS` を十分長めに取ってください。
 YouTube 制限が強い環境では、resolver 側に `YTDLP_COOKIES_FILE=/opt/music-bot/resolver-service/cookies.txt`
 を追加して cookies.txt を使う構成にもできます。
 

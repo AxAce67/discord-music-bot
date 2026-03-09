@@ -35,6 +35,7 @@ Copy `.env.example` and set:
 - `RESOLVER_PORT`
 - `RESOLVER_LOG_LEVEL`
 - `YTDLP_BINARY`
+- `YTDLP_TIMEOUT_SECONDS` (optional, defaults to `30`)
 - `YTDLP_COOKIES_FILE` (optional)
 - `YTDLP_EXTRACTOR_ARGS` (optional, use `||` to separate multiple entries)
 - `YTDLP_SLEEP_INTERVAL_SECONDS` (optional)
@@ -73,6 +74,11 @@ YTDLP_SLEEP_INTERVAL_SECONDS=1
 
 The exact `po_token` flow depends on the provider/plugin you install on the VPS.
 This resolver only forwards the extractor args to `yt-dlp`; it does not generate PO Tokens itself.
+
+If `POST /v1/resolve-playlist` times out on slower hosts such as Raspberry Pi, raise both:
+
+- bot side: `RESOLVER_TIMEOUT_MS`
+- resolver side: `YTDLP_TIMEOUT_SECONDS`
 
 ## systemd
 

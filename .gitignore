@@ -13,4 +13,5 @@ landing-site/
 tmp-akiz.html
 resolver-service/.venv/
 resolver-service/__pycache__/
+resolver-service/tests/__pycache__/
 resolver-service/.env

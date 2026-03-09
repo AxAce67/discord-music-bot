@@ -15,7 +15,7 @@ logger = logging.getLogger("resolver.youtube")
 
 DEFAULT_LIMIT = 10
 MAX_PLAYLIST_TRACKS = 100
-SUBPROCESS_TIMEOUT_SECONDS = 12
+DEFAULT_YTDLP_TIMEOUT_SECONDS = 30
 
 
 def search_tracks(query: str, limit: int = DEFAULT_LIMIT) -> list[TrackPayload]:
@@ -66,7 +66,7 @@ def run_yt_dlp(identifier: str) -> dict[str, Any]:
             command,
             capture_output=True,
             text=True,
-            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=get_yt_dlp_timeout_seconds(),
             check=False,
         )
     except subprocess.TimeoutExpired as error:
@@ -267,6 +267,32 @@ def get_common_yt_dlp_command() -> list[str]:
         command.extend(["--sleep-requests", sleep_interval])
 
     return command
+
+
+def get_yt_dlp_timeout_seconds() -> int:
+    raw_value = os.getenv("YTDLP_TIMEOUT_SECONDS")
+    if raw_value is None or raw_value.strip() == "":
+        return DEFAULT_YTDLP_TIMEOUT_SECONDS
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid YTDLP_TIMEOUT_SECONDS=%r, falling back to %s seconds",
+            raw_value,
+            DEFAULT_YTDLP_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_YTDLP_TIMEOUT_SECONDS
+
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive YTDLP_TIMEOUT_SECONDS=%r, falling back to %s seconds",
+            raw_value,
+            DEFAULT_YTDLP_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_YTDLP_TIMEOUT_SECONDS
+
+    return parsed
 
 
 def split_env_list(value: str) -> list[str]:

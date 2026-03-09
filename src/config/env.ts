@@ -30,7 +30,7 @@ const envSchema = z.object({
     }, z.boolean())
     .default(false),
   RESOLVER_BASE_URL: z.string().url().default("http://127.0.0.1:8080"),
-  RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+  RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info")
 });
 
